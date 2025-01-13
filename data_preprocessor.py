@@ -49,8 +49,8 @@ def data_preprocess(config: DictConfig):
                                           configs['allowed_special'])
     
     base_dir = "data/"
-    prompt_file_path = base_dir+"filtered_sampled_output.txt"
-    target_file_path = base_dir+"filtered_target_output.txt"
+    prompt_file_path = base_dir+"filtered_sampled_output_2.txt"
+    target_file_path = base_dir+"filtered_target_output_2.txt"
     sample_rate= 24000
     save_dir = base_dir+"lm_input_tensor/"
 

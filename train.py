@@ -226,7 +226,7 @@ def train(config: DictConfig):
         illegal_token_mask=illegal_token_mask,
         train_probes=train_probes,
         val_probes=val_probes,
-        diversity_metric=config.task.eval.diversity_metric,
+        diversity_metric=None,
         use_4bit=config.task.training.use_4bit,
     )
 
@@ -235,6 +235,7 @@ def train(config: DictConfig):
         accelerator=config.device.accelerator,                                          # 运行命令指定gpu.yaml，加速器为 cuda
         max_epochs=config.task.training.epochs,                                         # config 文件中指定为 300
         accumulate_grad_batches=config.task.training.accumulate_grad_batches,           # 运行命令有指定为 32，指定梯度累计的步数
+        num_sanity_val_steps=0,
         logger=config.logger                                                            # 在 train.yaml 中指定了 wandb
         if isinstance(config.logger, bool)                                              # 意思是如果 config.logger 是布尔值，则不加载 logger
         else hydra.utils.instantiate(config.logger),                                    # 否则就加载指定的 logger

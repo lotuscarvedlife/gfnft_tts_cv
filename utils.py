@@ -38,7 +38,7 @@ def score_fast(
     # 再次获取模型输出下一个 token 的得分
     if prompt_cache is None:
         y_pred, _= model.llm.forward_one_step(encoded_input,masks=torch.tril(torch.ones((1, encoded_input.shape[1], encoded_input.shape[1]), device=encoded_input.device)).to(torch.bool))
-        logits = model.llm_decoder(y_pred).log_softmax(dim=-1)
+        logits = model.llm_decoder(y_pred)
     else:
         # NOTE: 这里我看应该用不着，所以写死了
         # prompt_cache[1] contains past_key_values which need to be reshaped to the right batch size from encoded_input
@@ -280,7 +280,10 @@ def generate_and_return_termination_logprob(
                                             cache=cache)
 
         # 获取最后一层的 logits，即每个 token 的预测得分，相当于每次都往前推进一个单词（token）
-        logits = model.llm_decoder(y_pred[:, -1]).log_softmax(dim=-1)
+        # 这个地方多了个 log_softmax, 不知道会不会有问题
+        # logits = model.llm_decoder(y_pred[:, -1]).log_softmax(dim=-1)
+        logits = model.llm_decoder(y_pred[:, -1])
+        # print(logits)
         # 没有动作序列，则进行自动生成
         if action_seq is None:
             with torch.no_grad():
@@ -389,7 +392,7 @@ def generate_and_return_termination_logprob(
         # 对得到的所有采样语句的 token_id 序列计算奖励分数，剔除最后一个 token，因为这里可以确保是
         # Reward for all intermediate states (except the last one,
         # which is guaranteed to be the termination token)
-        log_r, log_r_unpenalized = reward_fn(input_batch=state, generated_tokens=generated_tokens)
+        log_r, log_r_unpenalized = reward_fn(input_batch=state[:, :-1], generated_tokens=generated_tokens[:, :-1])
     # add a termination token to the end of the sequence
     return generated_tokens, state, log_pf, log_pterm, log_r, log_r_unpenalized
 
@@ -408,7 +411,7 @@ def modified_subtb_loss(
         == log_r.shape[1]
         == log_pterm.shape[1]
         == generated_text.shape[1]
-    )
+    ), f"log_pf.shape: {log_pf.shape}, log_r.shape: {log_r.shape}, log_pterm.shape: {log_pterm.shape}, generated_text.shape: {generated_text.shape}"
     assert (
         log_pf.shape[1] > 1
     )  # With modified-style losses, we need at least one transition before terminating

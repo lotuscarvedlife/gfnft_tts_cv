@@ -23,10 +23,10 @@ training:
   pf_temp_low: 0.5
   pf_temp_prob: 0.666
   use_buffer_prob: 0.25
-  n_samples: 20
+  n_samples: 10
   lr: 0.0001
   accumulate_grad_batches: 2
-  epochs: 300
+  epochs: 10
   use_4bit: False
 
 eval:
@@ -56,7 +56,7 @@ callbacks:
 
 constraints:
   min_sentence_len: 1
-  max_sentence_len: 3000
+  max_sentence_len: 150
   illegal_tokens: [
     "<|endoftext|>",
     "\n", "\n\n", "\t", "\"", "\"\"", "\"\"\"",

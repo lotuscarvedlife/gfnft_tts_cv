@@ -40,7 +40,7 @@ class NextSentenceGFNTask(LightningModule):
     ):
         super().__init__()
         # 忽略 model 本体和 tokenizer 的参数，保存其他（应该是微调）的超参数
-        self.save_hyperparameters(ignore=["model", "tokenizer"])
+        self.save_hyperparameters(ignore=["model"])
 
         # 指定 model、tokenizer、奖励函数、奖励缓存
         self.model = model
@@ -50,8 +50,11 @@ class NextSentenceGFNTask(LightningModule):
 
         # 指定 diversity_metric，用于计算句子多样性的评价指标，包括名字和本体
         # 在本次训练的设定中为config.task.eval.diversity_metric = "sequence_embedding"
-        self.diversity_metric_name = f"diversity ({diversity_metric})"
-        self.diversity_metric = SequenceDiversity(diversity_metric)
+        # NOTE: 这里设置为了 None
+        # self.diversity_metric_name = f"diversity ({diversity_metric})"
+        # self.diversity_metric = SequenceDiversity(diversity_metric)
+        self.diversity_metric_name = None
+        self.diversity_metric = None
 
         # 定义一个函数，用于根据训练步数计算学习率，并返回当前学习率
         self.get_lr_at_step = lambda step: min(step / 20 * lr, lr)
@@ -316,15 +319,16 @@ class NextSentenceGFNTask(LightningModule):
             sentence_len.float().mean(),
             sync_dist=True,
         )
-        if self.diversity_metric.method is not None:
-            generated_sentences = self.tokenizer.batch_decode(
-                generated_text[:, len(prompt) :]
-            )
-            generated_sentences = [
-                text.replace(".", "") for text in generated_sentences
-            ]
-            diversity = self.diversity_metric(generated_sentences)
-            self.log(f"val/{self.diversity_metric_name}", diversity, sync_dist=True)
+        # NOTE: 这里暂时注释掉了，为了运行
+        # if self.diversity_metric.method is not None:
+        #     generated_sentences = self.tokenizer.batch_decode(
+        #         generated_text[:, len(prompt) :]
+        #     )
+        #     generated_sentences = [
+        #         text.replace(".", "") for text in generated_sentences
+        #     ]
+        #     diversity = self.diversity_metric(generated_sentences)
+        #     self.log(f"val/{self.diversity_metric_name}", diversity, sync_dist=True)
 
     """
     定义每个训练步开始时的操作，包括更新奖励温度和学习率。
