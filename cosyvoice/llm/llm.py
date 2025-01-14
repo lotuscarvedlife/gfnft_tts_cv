@@ -306,6 +306,7 @@ class Qwen2LM(torch.nn.Module):
             sampling: int = 25,
             max_token_text_ratio: float = 20,
             min_token_text_ratio: float = 2,
+            use_lora_sampling = False,
     ) -> Generator[torch.Tensor, None, None]:
         device = text.device
         text = torch.concat([prompt_text, text], dim=1)
@@ -335,8 +336,33 @@ class Qwen2LM(torch.nn.Module):
             y_pred, cache = self.llm.forward_one_step(lm_input,
                                                       masks=torch.tril(torch.ones((1, lm_input.shape[1], lm_input.shape[1]), device=lm_input.device)).to(torch.bool),
                                                       cache=cache)
-            logp = self.llm_decoder(y_pred[:, -1]).log_softmax(dim=-1)
-            top_ids = self.sampling_ids(logp.squeeze(dim=0), out_tokens, sampling, ignore_eos=True if i < min_len else False).item()
+            if use_lora_sampling == False:
+                logp = self.llm_decoder(y_pred[:, -1]).log_softmax(dim=-1)
+                top_ids = self.sampling_ids(logp.squeeze(dim=0), out_tokens, sampling, ignore_eos=True if i < min_len else False).item()
+            else:
+                # ---------------- GFN Sampling ----------------- #
+                temperature = 1.0  # 在gfnft中，val 数据集采样里，不设置温度
+                logp = self.llm_decoder(y_pred[:, -1])
+                prob = logp.softmax(dim=-1)
+                modified_logits = logp.clone().detach()
+                assert modified_logits.shape[0]==1 and modified_logits.dim()==2
+                # 如果此时还处于最小长度限制内，则将终止 token 的概率设置为无穷小
+                if i < min_len:
+                    # if we haven't reach the minimum length, set the probability of terminating to 0
+                    modified_logits[:, self.speech_token_size] = -torch.inf
+                # 如果此时已经达到最大长度限制，则将终止 token 的概率设置为1，其他设置为无穷小
+                elif i >= max_len-1:
+                    # if we've reached the maximum length, set the probability of terminating to 1
+                    mask = [True] * modified_logits.shape[1]
+                    mask[self.speech_token_size] = False
+                    modified_logits[:, mask] = -torch.inf
+                # 将CosyVoice的非法词汇概率设置为负数
+                modified_logits[:, self.speech_token_size+1:] = -torch.inf
+                # 进行温度处理，让分布更尖或者更平缓
+                prob = (modified_logits / temperature).softmax(dim=-1)
+                # 根据概率采样下一个token，生成每一句的下一个 token id
+                top_ids = torch.multinomial(prob.squeeze(dim=0), num_samples=1).item()
+                # ---------------- GFN Sampling ----------------- #
             if top_ids == self.speech_token_size:
                 break
             if top_ids > self.speech_token_size:

@@ -147,7 +147,9 @@ class CosyVoice2(CosyVoice):
         self.model = CosyVoice2Model(configs['llm'], configs['flow'], configs['hift'], fp16)
         self.model.load('{}/llm.pt'.format(model_dir),
                         '{}/flow.pt'.format(model_dir),
-                        '{}/hift.pt'.format(model_dir))
+                        '{}/hift.pt'.format(model_dir),
+                        lora_config=configs['lora_config'],
+                        lora_model='{}/epoch=epoch=014.ckpt'.format(model_dir))
         if load_jit:
             self.model.load_jit('{}/flow.encoder.{}.zip'.format(model_dir, 'fp16' if self.fp16 is True else 'fp32'))
         if load_trt:

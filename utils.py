@@ -262,6 +262,8 @@ def generate_and_return_termination_logprob(
     # 每一步都生成并返回句子的终止概率
     # generate and return the probability of terminating at every step
     # 表示哪些序列仍在生成状态，初始时所有序列为活跃状态。
+    min_len = encoded_prompt["target_text_token_len"]*2
+    encoded_prompt = encoded_prompt["lm_input"]
     active_seqs = torch.ones(encoded_prompt.size(0)).bool().to(encoded_prompt.device)
     # 存储当前生成的状态
     state = encoded_prompt.clone()

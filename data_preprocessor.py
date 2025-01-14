@@ -54,6 +54,11 @@ def data_preprocess(config: DictConfig):
     sample_rate= 24000
     save_dir = base_dir+"lm_input_tensor/"
 
+    # 用于统计的变量
+    all_target_token_len = []
+    all_lm_input_token_len = []
+    all_prompt_audio_token_len = []
+    all_prompt_text_token_len = []
     with open(prompt_file_path, 'r', encoding='utf-8') as prompt_file, open(target_file_path, 'r', encoding='utf-8') as target_file:
         for prompt_line, target_line in tqdm(zip(prompt_file, target_file), total=1000, desc="Processing llm input data"):
             
@@ -91,11 +96,40 @@ def data_preprocess(config: DictConfig):
                 prompt_speech_token_emb = model.speech_embedding(prompt_speech_token)
             else:
                 prompt_speech_token_emb = torch.zeros(1, 0, model.llm_input_size, dtype=text.dtype).to(device)
+            
+            # 最终的 input
             lm_input = torch.concat([sos_eos_emb, embedding, text, task_id_emb, prompt_speech_token_emb], dim=1)
+            target_text_token_len = int(text_len - prompt_text_len)
 
-            torch.save(lm_input, save_dir+f"data_{audio_file_name}.pt")
+            all_input = {
+                "lm_input": lm_input,
+                "target_text_token_len": target_text_token_len 
+            }
 
+            # 做样本记录
+            all_target_token_len.append(target_text_token_len)
+            all_lm_input_token_len.append(lm_input.shape[1])
+            all_prompt_audio_token_len.append(prompt_speech_token_emb.shape[1])
+            all_prompt_text_token_len.append(prompt_text_len)
 
+            torch.save(all_input, save_dir+f"data_{audio_file_name}.pt")
+
+    print("target_token_len: ")
+    print(f" - max: {max(all_target_token_len)}")
+    print(f" - min: {min(all_target_token_len)}")
+    print(f" - avg: {sum(all_target_token_len)/len(all_target_token_len)}")
+    print("prompt_text_token_len: ")
+    print(f" - max: {max(all_prompt_text_token_len)}")
+    print(f" - min: {min(all_prompt_text_token_len)}")
+    print(f" - avg: {sum(all_prompt_text_token_len)/len(all_prompt_text_token_len)}")
+    print("prompt_audio_token_len: ")
+    print(f" - max: {max(all_prompt_audio_token_len)}")
+    print(f" - min: {min(all_prompt_audio_token_len)}")
+    print(f" - avg: {sum(all_prompt_audio_token_len)/len(all_prompt_audio_token_len)}")
+    print("lm_input_token_len: ")
+    print(f" - max: {max(all_lm_input_token_len)}")
+    print(f" - min: {min(all_lm_input_token_len)}")
+    print(f" - avg: {sum(all_lm_input_token_len)/len(all_lm_input_token_len)}")
 
 
 

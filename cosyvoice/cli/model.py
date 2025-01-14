@@ -21,7 +21,9 @@ from contextlib import nullcontext
 import uuid
 from cosyvoice.utils.common import fade_in_out
 from cosyvoice.utils.file_utils import convert_onnx_to_trt
-
+from peft import PeftModel, get_peft_model, LoraConfig
+import hydra
+from hydra.utils import instantiate
 
 class CosyVoiceModel:
 
@@ -65,9 +67,28 @@ class CosyVoiceModel:
         self.flow_cache_dict = {}
         self.hift_cache_dict = {}
 
-    def load(self, llm_model, flow_model, hift_model):
+    def load(self, llm_model, flow_model, hift_model, lora_model=None, lora_config=None):
         self.llm.load_state_dict(torch.load(llm_model, map_location=self.device), strict=True)
+        # 加载 lora 微调模型
+        if lora_model != None and lora_config != None:
+            # print("6666666666666666666666666666666666666666666666666666")
+            # self.llm = PeftModel.from_pretrained(self.llm, lora_model)
+            self.llm = get_peft_model(self.llm, hydra.utils.instantiate(lora_config))
+            lora_weights = torch.load(lora_model, map_location=self.device)["state_dict"]
+            lora_weights = {k.replace("model.", "", 1): v for k, v in lora_weights.items()}
+            self.llm.load_state_dict(lora_weights, strict=False)
         self.llm.to(self.device).eval()
+        # ----------------------- for test ----------------------- #
+        # # print(self.llm)
+        # # 加载模型和保存的状态字典
+        # model_state = self.llm.state_dict()
+        # loaded_state = torch.load(lora_model, map_location=self.device)['state_dict']
+        # # 找出未匹配的键
+        # missing_keys = set(model_state.keys()) - set(loaded_state.keys())
+        # unexpected_keys = set(loaded_state.keys()) - set(model_state.keys())
+        # print(f"Missing keys: {missing_keys}")
+        # print(f"Unexpected keys: {unexpected_keys}")
+        # ----------------------- for test ----------------------- #
         self.flow.load_state_dict(torch.load(flow_model, map_location=self.device), strict=True)
         self.flow.to(self.device).eval()
         # in case hift_model is a hifigan model
@@ -103,7 +124,8 @@ class CosyVoiceModel:
                                         prompt_text_len=torch.tensor([prompt_text.shape[1]], dtype=torch.int32).to(self.device),
                                         prompt_speech_token=llm_prompt_speech_token.to(self.device),
                                         prompt_speech_token_len=torch.tensor([llm_prompt_speech_token.shape[1]], dtype=torch.int32).to(self.device),
-                                        embedding=llm_embedding.to(self.device)):
+                                        embedding=llm_embedding.to(self.device),
+                                        use_lora_sampling = True):
                 self.tts_speech_token_dict[uuid].append(i)
         self.llm_end_dict[uuid] = True
 

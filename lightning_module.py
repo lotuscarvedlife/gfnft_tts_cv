@@ -82,15 +82,16 @@ class NextSentenceGFNTask(LightningModule):
     """
     def forward(self, prompt, n_samples=None, pf_temperature=1.0, action_seq=None):
         # 保证 prompt 只有一句话
-        assert prompt.ndim == 2
+        assert prompt["lm_input"].ndim == 2
+        assert isinstance(prompt, dict)
         # 设置采样的样本数量，默认使用超参数中的设置（20）
         n_samples = self.hparams.n_samples if n_samples is None else n_samples
         # 确保 prompt 的维度是 (n_samples, prompt_len, model_del)
-        prompt = prompt.unsqueeze(0).expand(n_samples, -1, -1)
+        prompt["lm_input"] = prompt["lm_input"].unsqueeze(0).expand(n_samples, -1, -1)
         # 定义奖励函数，预先指定一些参数
         reward_fn = partial(
             self.reward.score,                  # score 为奖励函数本体
-            prompt_length=prompt.shape[1],      # prompt_len 为 prompt 的长度
+            prompt_length=prompt["lm_input"].shape[1],      # prompt_len 为 prompt 的长度
             model=self.model,                   # 传入 model
         )
         # 调用 generate_and_return_termination_logprob 函数生成文本并计算相关概率和奖励。
@@ -121,18 +122,20 @@ class NextSentenceGFNTask(LightningModule):
     """
     def training_step(self, prompt, batch_idx):
         # Should always be (1, prompt_len)
-        prompt = prompt[0]  # [T, embedding_d]
+        # print(prompt)
+        assert isinstance(prompt, dict)
+        prompt["lm_input"] = prompt["lm_input"][0]  # [T, embedding_d]
 
         # 决定是否从奖励缓冲区中进行采样，这里概率为0.25（设置文件中有），并且此时缓冲区有存对应提示
         # Sample a sentence and get the reward
         if (
             random.random() < self.hparams.use_buffer_prob
-            and self.reward_buffer.sample(self.hparams.n_samples, prompt)[0] is not None    # 保证缓冲区中有可用样本
+            and self.reward_buffer.sample(self.hparams.n_samples, prompt["lm_input"])[0] is not None    # 保证缓冲区中有可用样本
         ):
             # 从奖励缓冲区中采样，得到 action_seq 和 reward（log_r）
             # Using a sample from the reward buffer
             action_seq, log_r = self.reward_buffer.sample(
-                self.hparams.n_samples, prompt
+                self.hparams.n_samples, prompt["lm_input"]
             )
             # 生成句子并计算前向概率、句子终止概率、未惩罚奖励
             generated_text, lm_input_embedding, log_pf, log_pterm, _, log_r_unpenalized = self.forward(
@@ -162,7 +165,7 @@ class NextSentenceGFNTask(LightningModule):
             )
             # 将采样到的句子添加到奖励缓冲区
             self.reward_buffer.add_batch(
-                prompt=prompt,
+                prompt=prompt["lm_input"],
                 sentences=generated_text,
                 logrewards=log_r
                 * self.reward.temperature,  # undo the effect of reward tempering
@@ -176,7 +179,7 @@ class NextSentenceGFNTask(LightningModule):
             log_pterm=log_pterm,
             generated_text=generated_text,
             termination_token_id=self.end_of_sentence_token_id,
-            prompt_len=len(prompt),
+            prompt_len=len(prompt["lm_input"]),
             subtb_lambda=self.hparams.subtb_lambda,
         )
 
@@ -189,7 +192,7 @@ class NextSentenceGFNTask(LightningModule):
             log_r=log_r,
             log_r_unpenalized=log_r_unpenalized,
             termination_token_id=self.end_of_sentence_token_id,
-            prompt_len=len(prompt),
+            prompt_len=len(prompt["lm_input"]),
         )
         log_ps = last_log_r * self.reward.temperature
         log_ps_unpenalized = last_log_r_unpenalized * self.reward.temperature
@@ -253,7 +256,7 @@ class NextSentenceGFNTask(LightningModule):
     """
     def validation_step(self, prompt, batch_idx):
         # Should always be (1, prompt_len)
-        prompt = prompt[0]
+        prompt["lm_input"] = prompt["lm_input"][0]
 
         # Sample a sentence and get the reward
         generated_text, lm_input_embedding, log_pf, log_pterm, log_r, log_r_unpenalized = self.forward(
@@ -267,7 +270,7 @@ class NextSentenceGFNTask(LightningModule):
             log_pterm=log_pterm,
             generated_text=generated_text,
             termination_token_id=self.end_of_sentence_token_id,
-            prompt_len=len(prompt),
+            prompt_len=len(prompt["lm_input"]),
             subtb_lambda=self.hparams.subtb_lambda,
         )
 
@@ -279,7 +282,7 @@ class NextSentenceGFNTask(LightningModule):
             log_r=log_r,
             log_r_unpenalized=log_r_unpenalized,
             termination_token_id=self.end_of_sentence_token_id,
-            prompt_len=len(prompt),
+            prompt_len=len(prompt["lm_input"]),
         )
         log_ps = last_log_r * self.reward.temperature
         log_ps_unpenalized = last_log_r_unpenalized * self.reward.temperature
@@ -372,10 +375,10 @@ class NextSentenceGFNTask(LightningModule):
         log_rs, log_pfss = [], []
         val_data = self.trainer.datamodule.val_dataloader().dataset
         for prompt in val_data:
-            prompt = prompt[0]
+            prompt["lm_input"] = prompt["lm_input"][0].to(self.device)
             # 生成文本，并计算相关的概率和奖励，2.0 表示使用较高的温度进行探索
             generated_text, lm_input_embedding, log_pf, log_pterm, log_r, log_r_unpenalized = self.forward(
-                prompt.to(self.device), pf_temperature=2.0
+                prompt, pf_temperature=2.0
             )
             # 调用方法计算终止位置的 log_pfs（各个生成的语句的累计前向概率加上位置终止的概率）
             # log_r（各个生成语句的直接奖励分数） 等值进行聚合并作记录
@@ -386,7 +389,7 @@ class NextSentenceGFNTask(LightningModule):
                 log_r=log_r,
                 log_r_unpenalized=log_r_unpenalized,
                 termination_token_id=self.end_of_sentence_token_id,
-                prompt_len=len(prompt),
+                prompt_len=len(prompt["lm_input"]),
             )
             log_rs.append(log_r)
             log_pfss.append(log_pfs)
