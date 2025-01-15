@@ -228,6 +228,7 @@ def train(config: DictConfig):
         val_probes=val_probes,
         diversity_metric=None,
         use_4bit=config.task.training.use_4bit,
+        devices_count=config.device.count
     )
 
     # 创建一个PyTorch Lightning Trainer实例，配置了加速器、最大轮数、梯度累积步数、日志记录器和回调函数等。

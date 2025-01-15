@@ -131,6 +131,38 @@ class CosyVoiceFrontEnd:
                                              token_min_n=60, merge_len=20, comma_split=False))
         texts = [i for i in texts if not is_only_punctuation(i)]
         return texts if split is True else text
+    
+    def text_list_normalize(self, text_list, split=True, text_frontend=True):
+        if text_frontend is False:
+            return text_list
+        text_list_output = []
+        text_list_output_split = []
+        for text in text_list:
+            text = text.strip()
+            if self.use_ttsfrd:
+                texts = [i["text"] for i in json.loads(self.frd.do_voicegen_frd(text))["sentences"]]
+                text = ''.join(texts)
+            else:
+                if contains_chinese(text):
+                    text = self.zh_tn_model.normalize(text)
+                    text = text.replace("\n", "")
+                    text = replace_blank(text)
+                    text = replace_corner_mark(text)
+                    text = text.replace(".", "。")
+                    text = text.replace(" - ", "，")
+                    text = remove_bracket(text)
+                    text = re.sub(r'[，,、]+$', '。', text)
+                    texts = list(split_paragraph(text, partial(self.tokenizer.encode, allowed_special=self.allowed_special), "zh", token_max_n=80,
+                                                token_min_n=60, merge_len=20, comma_split=False))
+                else:
+                    text = self.en_tn_model.normalize(text)
+                    text = spell_out_number(text, self.inflect_parser)
+                    texts = list(split_paragraph(text, partial(self.tokenizer.encode, allowed_special=self.allowed_special), "en", token_max_n=80,
+                                                token_min_n=60, merge_len=20, comma_split=False))
+            texts = [i for i in texts if not is_only_punctuation(i)]
+            text_list_output.append(text)
+            text_list_output_split.extend(texts)
+        return text_list_output_split if split is True else text_list_output
 
     def frontend_sft(self, tts_text, spk_id):
         tts_text_token, tts_text_token_len = self._extract_text_token(tts_text)

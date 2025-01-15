@@ -9,10 +9,17 @@ cosyvoice = CosyVoice2('pretrained_models/CosyVoice2-0.5B', load_jit=False, load
 # NOTE if you want to reproduce the results on https://funaudiollm.github.io/cosyvoice2, please add text_frontend=False during inference
 # zero_shot usage
 prompt_speech_16k = load_wav('output_trump3.wav', 16000)
-for i, j in enumerate(cosyvoice.inference_zero_shot('I will make China great again by doing things together with American people who were born natively in this countary. Hey Man, what\'s wrong with you? Come and join us in Summer! Don\'t be shy! We can play this all day long by doing what we love to do. ',
+tts_list = []
+with open("inference_target_tts_text.txt", "r", encoding='utf-8') as file:
+    lines = file.readlines()
+    for line in lines:
+        tts_list.append(line.strip())
+    
+# 现在这个可以合成 list 目标
+for i, j in enumerate(cosyvoice.inference_zero_shot(tts_list[:9],
                                                      'Because our leaders are stupid, our politicians are stupid',
                                                        prompt_speech_16k, stream=False)):
-    torchaudio.save('zero_shot_{}.wav'.format(i), j['tts_speech'], cosyvoice.sample_rate)
+    torchaudio.save('inference_results/test/zero_shot_{}.wav'.format(i), j['tts_speech'], cosyvoice.sample_rate)
 
 # # fine grained control, for supported control, check cosyvoice/tokenizer/tokenizer.py#L248
 # for i, j in enumerate(cosyvoice.inference_cross_lingual('在他讲述那个荒诞故事的过程中，他突然[laughter]停下来，因为他自己也被逗笑了[laughter]。', prompt_speech_16k, stream=False)):

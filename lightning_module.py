@@ -33,6 +33,7 @@ class NextSentenceGFNTask(LightningModule):
         reward_temp_end,
         reward_temp_horizon,
         illegal_token_mask,
+        devices_count=1,
         train_probes=None,
         val_probes=None,
         diversity_metric=None,
@@ -57,12 +58,12 @@ class NextSentenceGFNTask(LightningModule):
         self.diversity_metric = None
 
         # 定义一个函数，用于根据训练步数计算学习率，并返回当前学习率
-        self.get_lr_at_step = lambda step: min(step / 20 * lr, lr)
+        self.get_lr_at_step = lambda step: min((step*self.hparams.devices_count) / 200 * lr, lr)
         # 定义函数用以获取当前奖励的温度值，温度随步数变化，注意运行命令中有指定参数 temp_end
         # 奖励温度从 reward_temp_start1.0 开始逐渐增加到 reward_temp_end0.8，在 reward_temp_horizon 步内完成变化
         self.get_reward_temp_at_step = lambda step: reward_temp_start + (
             reward_temp_end - reward_temp_start
-        ) * min(1, step / reward_temp_horizon)
+        ) * min(1, (step*self.hparams.devices_count/10) / reward_temp_horizon)
 
         # # 获取一个句子结束符的 token id
         self.end_of_sentence_token_id = model.speech_token_size
@@ -410,7 +411,7 @@ class NextSentenceGFNTask(LightningModule):
     """
     def on_train_start(self):
         # Log baseline metrics
-        val_data = self.trainer.datamodule.val_dataloader().dataset
+        val_data = None
         # NOTE: baseline 方法没有适配
         # baseline_performance = None
         # for prompt in val_data:

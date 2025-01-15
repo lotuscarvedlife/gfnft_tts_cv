@@ -324,6 +324,7 @@ class Qwen2LM(torch.nn.Module):
         else:
             prompt_speech_token_emb = torch.zeros(1, 0, self.llm_input_size, dtype=text.dtype).to(device)
         lm_input = torch.concat([sos_eos_emb, embedding, text, task_id_emb, prompt_speech_token_emb], dim=1)
+        prompt_len = lm_input.shape[1]
 
         # 4. cal min/max_length
         min_len = int((text_len - prompt_text_len) * min_token_text_ratio)
@@ -331,6 +332,7 @@ class Qwen2LM(torch.nn.Module):
 
         # 5. step by step decode
         out_tokens = []
+        state = lm_input.clone()
         cache = None
         for i in range(max_len):
             y_pred, cache = self.llm.forward_one_step(lm_input,
@@ -371,3 +373,49 @@ class Qwen2LM(torch.nn.Module):
             yield top_ids
             out_tokens.append(top_ids)
             lm_input = self.speech_embedding.weight[top_ids].reshape(1, 1, -1)
+            state = torch.cat([state, lm_input], dim=1)
+
+        # ------------------ 计算得分模块 -------------------- #
+        out_tokens = torch.tensor(out_tokens[:-1], device=device).unsqueeze(0)
+        state = state[:, :-1].to(device)
+        assert state.shape[0] == 1, state.shape
+        y_pred, _= self.llm.forward_one_step(state, 
+                                             masks=torch.tril(torch.ones((1, state.shape[1], state.shape[1]), 
+                                                                         device=device)).to(torch.bool)
+                                            )
+        logits = self.llm_decoder(y_pred)
+        # 去除 prompt 部分的得分（从 prompt 最后一个概率开始）
+        # get rid of the first few tokens
+        logits = logits[:, prompt_len - 1 :]
+        # softmax 转化成每组词汇的概率
+        logprob = logits.log_softmax(-1)
+        # 提取原来输入的采样后的语句中的生成部分的 token id 序列，并进行维度扩展
+        token_ids = out_tokens.unsqueeze(-1)
+        # 收集之前生成的每句话的 token_ids 对应的概率的对数
+        logPF = logprob[:, :-1].gather(-1, token_ids).squeeze(-1)
+        # 逐步累加每句话的采样的所有词汇的概率，即每步可以停止时，当前生成的句子的概率之和
+        logP = logPF.cumsum(dim=-1)  # logP(generated[:i+1] | prompt)，即给定 prompt 下，生成的句子的概率之和
+        # 获取每句话所有词汇位置的终止标记的概率，并作为初始 reward
+        reward = logprob[
+            :, :, self.speech_token_size
+        ]  # logP(generated[i+1]=term | prompt + generated[:i+1])，在i+1处停止时的概率
+        # 加上之前停止时候的概率，就得到了在任意一个地方停止时整个句子的生成概率
+        reward[:, 1:] += logP  # logP(generated[:i] + term | prompt)
+        # 标识哪些位置不是终止令牌，标识从生成的位置开始，一旦遇到终止令牌标记则标志为 false，否则为 true
+        non_term_mask = (out_tokens != self.speech_token_size)
+        # 在每一段句子中的最开始添加一个 true（即添加一列 true）
+        non_term_mask = torch.cat(
+            (
+                non_term_mask.new_ones(non_term_mask.shape[0], 1),
+                non_term_mask,
+            ),
+            dim=-1,
+        )  # Start (i.e., empty) state has never terminated（即还未生成任何东西一定不是终止符）
+        # 将实际中的终止标记位置后续的奖励都设置为 0
+        reward[~non_term_mask] = 0.0
+        # 将小于最小句子长度的句子奖励设置为 -99，防止被选择。
+        reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -99, reward)
+
+        print("This sentence got reward of")
+        print(reward)
+        print(f"end reward = {reward[0, -1]}")

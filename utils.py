@@ -37,7 +37,10 @@ def score_fast(
 ):
     # 再次获取模型输出下一个 token 的得分
     if prompt_cache is None:
-        y_pred, _= model.llm.forward_one_step(encoded_input,masks=torch.tril(torch.ones((1, encoded_input.shape[1], encoded_input.shape[1]), device=encoded_input.device)).to(torch.bool))
+        y_pred, _= model.llm.forward_one_step(encoded_input,
+                                              masks=torch.tril(torch.ones((1, encoded_input.shape[1], encoded_input.shape[1]), 
+                                                                          device=encoded_input.device)).to(torch.bool)
+                                            )
         logits = model.llm_decoder(y_pred)
     else:
         # NOTE: 这里我看应该用不着，所以写死了
@@ -92,7 +95,7 @@ def score_fast(
     reward[~non_term_mask] = 0.0
     reward_unpenalized = reward.clone()
     # 将小于最小句子长度的句子奖励设置为 -99，防止被选择。
-    reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -99, reward)
+    reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -torch.inf, reward)
     return reward, reward_unpenalized
 
 
