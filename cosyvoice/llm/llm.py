@@ -305,7 +305,7 @@ class Qwen2LM(torch.nn.Module):
             embedding: torch.Tensor,
             sampling: int = 25,
             max_token_text_ratio: float = 20,
-            min_token_text_ratio: float = 2,
+            min_token_text_ratio: float = 7,
             use_lora_sampling = False,
     ) -> Generator[torch.Tensor, None, None]:
         device = text.device
@@ -348,6 +348,7 @@ class Qwen2LM(torch.nn.Module):
                 prob = logp.softmax(dim=-1)
                 modified_logits = logp.clone().detach()
                 assert modified_logits.shape[0]==1 and modified_logits.dim()==2
+                print(f"end token prob: {modified_logits[:, self.speech_token_size].item()}")
                 # 如果此时还处于最小长度限制内，则将终止 token 的概率设置为无穷小
                 if i < min_len:
                     # if we haven't reach the minimum length, set the probability of terminating to 0
@@ -364,6 +365,7 @@ class Qwen2LM(torch.nn.Module):
                 prob = (modified_logits / temperature).softmax(dim=-1)
                 # 根据概率采样下一个token，生成每一句的下一个 token id
                 top_ids = torch.multinomial(prob.squeeze(dim=0), num_samples=1).item()
+                print(f"chosen token prob: {modified_logits[:, top_ids].item()}")
                 # ---------------- GFN Sampling ----------------- #
             if top_ids == self.speech_token_size:
                 break
@@ -376,6 +378,7 @@ class Qwen2LM(torch.nn.Module):
             state = torch.cat([state, lm_input], dim=1)
 
         # ------------------ 计算得分模块 -------------------- #
+        # print(out_tokens)
         out_tokens = torch.tensor(out_tokens[:-1], device=device).unsqueeze(0)
         state = state[:, :-1].to(device)
         assert state.shape[0] == 1, state.shape

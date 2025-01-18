@@ -19,7 +19,7 @@ with open("inference_target_tts_text.txt", "r", encoding='utf-8') as file:
 for i, j in enumerate(cosyvoice.inference_zero_shot(tts_list[:9],
                                                      'Because our leaders are stupid, our politicians are stupid',
                                                        prompt_speech_16k, stream=False)):
-    torchaudio.save('inference_results/test/zero_shot_{}.wav'.format(i), j['tts_speech'], cosyvoice.sample_rate)
+    torchaudio.save('inference_results/test_vanilla/zero_shot_{}.wav'.format(i), j['tts_speech'], cosyvoice.sample_rate)
 
 # # fine grained control, for supported control, check cosyvoice/tokenizer/tokenizer.py#L248
 # for i, j in enumerate(cosyvoice.inference_cross_lingual('在他讲述那个荒诞故事的过程中，他突然[laughter]停下来，因为他自己也被逗笑了[laughter]。', prompt_speech_16k, stream=False)):
