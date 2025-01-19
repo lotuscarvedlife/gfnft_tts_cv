@@ -305,7 +305,7 @@ class Qwen2LM(torch.nn.Module):
             embedding: torch.Tensor,
             sampling: int = 25,
             max_token_text_ratio: float = 20,
-            min_token_text_ratio: float = 7,
+            min_token_text_ratio: float = 2,
             use_lora_sampling = False,
     ) -> Generator[torch.Tensor, None, None]:
         device = text.device

@@ -58,7 +58,7 @@ callbacks:
   - _target_: pytorch_lightning.callbacks.EarlyStopping
     monitor: "val/logP(s) (avg)"
     mode: "max"
-    patience: 50
+    patience: 30
 
 constraints:
   min_sentence_len: 1

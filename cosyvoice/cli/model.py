@@ -125,7 +125,7 @@ class CosyVoiceModel:
                                         prompt_speech_token=llm_prompt_speech_token.to(self.device),
                                         prompt_speech_token_len=torch.tensor([llm_prompt_speech_token.shape[1]], dtype=torch.int32).to(self.device),
                                         embedding=llm_embedding.to(self.device),
-                                        use_lora_sampling = True):
+                                        use_lora_sampling = False):
                 self.tts_speech_token_dict[uuid].append(i)
         self.llm_end_dict[uuid] = True
 
