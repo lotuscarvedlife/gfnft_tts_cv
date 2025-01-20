@@ -398,6 +398,10 @@ class Qwen2LM(torch.nn.Module):
         logPF = logprob[:, :-1].gather(-1, token_ids).squeeze(-1)
         # 逐步累加每句话的采样的所有词汇的概率，即每步可以停止时，当前生成的句子的概率之和
         logP = logPF.cumsum(dim=-1)  # logP(generated[:i+1] | prompt)，即给定 prompt 下，生成的句子的概率之和
+        # ------------------- 尝试添加 baseline -------------------- #
+        # logP = logP - (logP.sum(dim=0)/logP.shape[0])
+        logP = logP / torch.arange(1, logP.shape[1]+1, dtype=logP.dtype, device=logP.device).unsqueeze(0)
+        # ------------------- 尝试添加 baseline -------------------- #
         # 获取每句话所有词汇位置的终止标记的概率，并作为初始 reward
         reward = logprob[
             :, :, self.speech_token_size

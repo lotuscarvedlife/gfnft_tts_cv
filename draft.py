@@ -18,13 +18,10 @@ import torch
 logPF = torch.tensor([[1,2,0,0,0],
                   [6,5,4,0,0],
                   [3,4,5,6,0]], dtype=float)
-logPF = logPF - (logPF.sum(dim=0)/logPF.shape[0])
+# logPF = logPF - (logPF.sum(dim=0)/logPF.shape[0])
 
-# mask = (a!=0)
-# sum_non_zero = torch.where(mask, a, torch.tensor(0.0)).sum(dim=0)
-# count_non_zero = mask.sum(dim=0).float()
-# count_non_zero[count_non_zero == 0] = 1
-# mean_non_zero = sum_non_zero / count_non_zero
-# expanded_mean = mean_non_zero.expand_as(a)
-# a = torch.where(mask, a - expanded_mean, a)
+# 创建一个形状为 [T] 的 tensor，包含从 1 到 T 的值
+# 使用广播机制将 divisors 扩展到与 tensor 相同的形状，并执行逐元素除法
+logPF[:, 1:] = logPF[:, 1:] / torch.arange(1, logPF.shape[1], dtype=logPF.dtype, device=logPF.device).unsqueeze(0)
+
 print(logPF)
