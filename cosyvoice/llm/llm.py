@@ -237,6 +237,18 @@ class Qwen2Encoder(torch.nn.Module):
         xs = outs.hidden_states[-1]
         new_cache = outs.past_key_values
         return xs, new_cache
+    
+    def forward_all(self, xs):
+        outs = self.model(
+            inputs_embeds=xs,
+            output_hidden_states=True,
+            return_dict=True,
+            use_cache=False,
+            # past_key_values=cache,
+        )
+        xs = outs.hidden_states[-1]
+        # new_cache = outs.past_key_values
+        return xs
 
 
 class Qwen2LM(torch.nn.Module):
@@ -307,6 +319,7 @@ class Qwen2LM(torch.nn.Module):
             max_token_text_ratio: float = 20,
             min_token_text_ratio: float = 2,
             use_lora_sampling = False,
+            use_lora_model = False,
     ) -> Generator[torch.Tensor, None, None]:
         device = text.device
         text = torch.concat([prompt_text, text], dim=1)
@@ -348,7 +361,7 @@ class Qwen2LM(torch.nn.Module):
                 prob = logp.softmax(dim=-1)
                 modified_logits = logp.clone().detach()
                 assert modified_logits.shape[0]==1 and modified_logits.dim()==2
-                print(f"end token prob: {modified_logits[:, self.speech_token_size].item()}")
+                # print(f"end token prob: {modified_logits[:, self.speech_token_size].item()}")
                 # 如果此时还处于最小长度限制内，则将终止 token 的概率设置为无穷小
                 if i < min_len:
                     # if we haven't reach the minimum length, set the probability of terminating to 0
@@ -365,7 +378,7 @@ class Qwen2LM(torch.nn.Module):
                 prob = (modified_logits / temperature).softmax(dim=-1)
                 # 根据概率采样下一个token，生成每一句的下一个 token id
                 top_ids = torch.multinomial(prob.squeeze(dim=0), num_samples=1).item()
-                print(f"chosen token prob: {modified_logits[:, top_ids].item()}")
+                # print(f"chosen token prob: {modified_logits[:, top_ids].item()}")
                 # ---------------- GFN Sampling ----------------- #
             if top_ids == self.speech_token_size:
                 break
@@ -379,9 +392,12 @@ class Qwen2LM(torch.nn.Module):
 
         # ------------------ 计算得分模块 -------------------- #
         # print(out_tokens)
+        # reward_temperature = 0.005
         out_tokens = torch.tensor(out_tokens[:-1], device=device).unsqueeze(0)
         state = state[:, :-1].to(device)
         assert state.shape[0] == 1, state.shape
+        if use_lora_model:
+            self.llm.disable_adapter_layers()
         y_pred, _= self.llm.forward_one_step(state, 
                                              masks=torch.tril(torch.ones((1, state.shape[1], state.shape[1]), 
                                                                          device=device)).to(torch.bool)
@@ -396,16 +412,21 @@ class Qwen2LM(torch.nn.Module):
         token_ids = out_tokens.unsqueeze(-1)
         # 收集之前生成的每句话的 token_ids 对应的概率的对数
         logPF = logprob[:, :-1].gather(-1, token_ids).squeeze(-1)
+        print(f"chosen token reward(logPF): {logPF}")
         # 逐步累加每句话的采样的所有词汇的概率，即每步可以停止时，当前生成的句子的概率之和
         logP = logPF.cumsum(dim=-1)  # logP(generated[:i+1] | prompt)，即给定 prompt 下，生成的句子的概率之和
+        # logP /= reward_temperature
         # ------------------- 尝试添加 baseline -------------------- #
         # logP = logP - (logP.sum(dim=0)/logP.shape[0])
-        logP = logP / torch.arange(1, logP.shape[1]+1, dtype=logP.dtype, device=logP.device).unsqueeze(0)
+        # logP = logP / torch.arange(1, logP.shape[1]+1, dtype=logP.dtype, device=logP.device).unsqueeze(0)
         # ------------------- 尝试添加 baseline -------------------- #
+        print(f"chosen token cumsum(logP): {logP}")
         # 获取每句话所有词汇位置的终止标记的概率，并作为初始 reward
         reward = logprob[
             :, :, self.speech_token_size
         ]  # logP(generated[i+1]=term | prompt + generated[:i+1])，在i+1处停止时的概率
+        # reward /= reward_temperature
+        print(f"end token reward: {reward}")
         # 加上之前停止时候的概率，就得到了在任意一个地方停止时整个句子的生成概率
         reward[:, 1:] += logP  # logP(generated[:i] + term | prompt)
         # 标识哪些位置不是终止令牌，标识从生成的位置开始，一旦遇到终止令牌标记则标志为 false，否则为 true
@@ -421,7 +442,13 @@ class Qwen2LM(torch.nn.Module):
         # 将实际中的终止标记位置后续的奖励都设置为 0
         reward[~non_term_mask] = 0.0
         # 将小于最小句子长度的句子奖励设置为 -99，防止被选择。
+        min_len = 1
         reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -99, reward)
+
+        # reward /= reward_temperature
+
+        if use_lora_model:
+            self.llm.enable_adapter_layers()
 
         print("This sentence got reward of")
         print(reward)

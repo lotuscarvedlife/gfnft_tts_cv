@@ -37,10 +37,7 @@ def score_fast(
 ):
     # 再次获取模型输出下一个 token 的得分
     if prompt_cache is None:
-        y_pred, _= model.llm.forward_one_step(encoded_input,
-                                              masks=torch.tril(torch.ones((1, encoded_input.shape[1], encoded_input.shape[1]), 
-                                                                          device=encoded_input.device)).to(torch.bool)
-                                            )
+        y_pred = model.llm.forward_all(encoded_input)
         logits = model.llm_decoder(y_pred)
     else:
         # NOTE: 这里我看应该用不着，所以写死了
@@ -79,12 +76,17 @@ def score_fast(
     reward = logprob[
         :, :, termination_token_id
     ]  # logP(generated[i+1]=term | prompt + generated[:i+1])，在i+1处停止时的概率
+    # ------------------- 尝试为term token添加阈值 penalty -------------------- #
+    # reward = torch.where(reward<torch.tensor([-5], dtype=reward.dtype, device=reward.device), 
+    #                     reward+torch.tensor([-8000], dtype=reward.dtype, device=reward.device),
+    #                     reward)
+    # ------------------- 尝试为term token添加阈值 penalty -------------------- #
     # 加上之前停止时候的概率，就得到了在任意一个地方停止时整个句子的生成概率
     reward[:, 1:] += logP  # logP(generated[:i] + term | prompt)
-    # ------------------- 尝试添加 baseline -------------------- #
+    # ------------------- 尝试添加 baseline 和修改温度 -------------------- #
     # logP = logP - (logP.sum(dim=0)/logP.shape[0])
     # logP = logP / torch.arange(1, logP.shape[1]+1, dtype=logP.dtype, device=logP.device).unsqueeze(0)
-    reward[:, 1:] = reward[:, 1:] / torch.arrange(1, reward.shape[1], dtype=reward.dtype, device=reward.device).unsqueeze(0)
+    # reward[:, 1:] = reward[:, 1:] / torch.arange(1, reward.shape[1], dtype=reward.dtype, device=reward.device).unsqueeze(0)
     # ------------------- 尝试添加 baseline -------------------- #
     # 标识哪些位置不是终止令牌，标识从生成的位置开始，一旦遇到终止令牌标记则标志为 false，否则为 true
     non_term_mask = (generated_tokens != termination_token_id)
@@ -99,8 +101,8 @@ def score_fast(
     # 将实际中的终止标记位置后续的奖励都设置为 0
     reward[~non_term_mask] = 0.0
     reward_unpenalized = reward.clone()
-    # 将小于最小句子长度的句子奖励设置为 -99，防止被选择。
-    reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -99, reward)
+    # 将小于最小句子长度的句子奖励设置为 -99。
+    # reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -99, reward)
     return reward, reward_unpenalized
 
 
@@ -453,6 +455,73 @@ def modified_subtb_loss(
     batch_loss /= total_lambda
 
     return batch_loss
+
+def trajectory_balance_loss(
+    log_pf,
+    log_r,
+    log_pterm,
+    generated_text,
+    termination_token_id,
+    prompt_len,
+    subtb_lambda=1.0,
+):
+    assert (
+        log_pf.shape[1]
+        == log_r.shape[1]
+        == log_pterm.shape[1]
+        == generated_text.shape[1]
+    ), f"log_pf.shape: {log_pf.shape}, log_r.shape: {log_r.shape}, log_pterm.shape: {log_pterm.shape}, generated_text.shape: {generated_text.shape}"
+    assert (
+        log_pf.shape[1] > 1
+    )  # With modified-style losses, we need at least one transition before terminating
+
+    # delta = (
+    #     log_r[:, :-1]
+    #     + log_pf[:, :-1]
+    #     + log_pterm[:, 1:]
+    #     - log_r[:, 1:]
+    #     - log_pterm[:, :-1]
+    # )
+    print(f"log_r: {log_r}")
+    print(f"log_pf: {log_pf}")
+    print(f"log_pterm: {log_pterm}")
+    # delta_cumsum = torch.cat([torch.zeros_like(delta[:, :1]), delta], 1).cumsum(1)
+    log_r_last = log_r.gather(1, (log_r!=0).cumsum(1).argmax(1).unsqueeze(1))
+    log_pterm_last = log_pterm.gather(1, (log_pterm!=0).cumsum(1).argmax(1).unsqueeze(1))
+    log_pf_sum = log_pf.cumsum(1)[:, -1].unsqueeze(1)
+    
+    print(f"log_r_last: {log_r_last}")
+    print(f"log_pterm_last: {log_pterm_last}")
+    print(f"log_pf_sum: {log_pf_sum}")
+    # Get a mask for tokens after the termination token in the generated_text
+    # 其中，已经结束的为 true
+    # 刚结束和还未结束的为 false
+    # mask = (generated_text[:, :-1] == termination_token_id).cumsum(-1) >= 1
+
+    batch_loss = 0.0
+    total_lambda = 0.0
+    generated_len = generated_text.shape[1]
+    subtraj_len = generated_len-1
+    subtb_term = (
+        # delta_cumsum[:, subtraj_len:] - delta_cumsum[:, :-subtraj_len]
+        log_r[:, 0].unsqueeze(1) + log_pf_sum + log_pterm_last - log_r_last - log_pterm[:, 0].unsqueeze(1)
+        # log_pf_sum + log_pterm_last - log_r_last
+    ) ** 2
+    # print(f"delta_cumsum[:, subtraj_len:]: {delta_cumsum[:, subtraj_len:]}, delta_cumsum[:, :-subtraj_len]: {delta_cumsum[:, :-subtraj_len]}")
+    print(f"subtb_term: {subtb_term}")
+    # subtb_term[mask[:, subtraj_len - 1 :]] = 0
+    # print(f"changed subtb_term: {subtb_term}")
+    batch_loss += subtb_lambda ** (subtraj_len - 1) * subtb_term.sum()
+    total_lambda += (
+        # subtb_lambda ** (subtraj_len - 1) * (~mask[:, subtraj_len - 1 :]).sum()
+        generated_text.shape[0]
+    )
+    print(f"batch_loss: {batch_loss}, total_lambda: {total_lambda}")
+    batch_loss /= total_lambda
+
+    return batch_loss
+
+
 
 # 用于计算生成文本的终止位置相关的值，包括累积的前向概率 (log_pfs)、奖励 (log_r) 和未惩罚的奖励 (log_r_unpenalized)
 def get_termination_vals(
