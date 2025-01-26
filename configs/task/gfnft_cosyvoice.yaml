@@ -62,7 +62,7 @@ callbacks:
 
 constraints:
   min_sentence_len: 1
-  max_sentence_len: 150
+  max_sentence_len: 160
   illegal_tokens: [
     "<|endoftext|>",
     "\n", "\n\n", "\t", "\"", "\"\"", "\"\"\"",

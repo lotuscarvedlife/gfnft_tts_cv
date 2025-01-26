@@ -338,8 +338,8 @@ def get_reward(config: DictConfig, sentence_token_id, illegal_token_mask):
         )
 
     reward = FrozenModelSentenceGivenPrompt(
-        temperature=1.125,
         sentence_token_id=sentence_token_id,                    # 输入语句结束 token id（“.”）
+        # temperature=0.875,   # 有全局温度的设置，这里我们不用设置
         min_len=config.task.constraints.min_sentence_len,       # 最小句子长度，为1
         vocab_alpha=config.task.reward.vocab_alpha,             # 词汇表偏好的概率补偿
         vocab_naughty_mask=illegal_token_mask,                  # 非法词汇表掩码

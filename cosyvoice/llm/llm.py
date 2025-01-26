@@ -246,6 +246,7 @@ class Qwen2Encoder(torch.nn.Module):
             use_cache=False,
             # past_key_values=cache,
         )
+        # print("we have entered into forward all function")
         xs = outs.hidden_states[-1]
         # new_cache = outs.past_key_values
         return xs
@@ -390,17 +391,107 @@ class Qwen2LM(torch.nn.Module):
             lm_input = self.speech_embedding.weight[top_ids].reshape(1, 1, -1)
             state = torch.cat([state, lm_input], dim=1)
 
-        # ------------------ 计算得分模块 -------------------- #
-        # print(out_tokens)
-        # reward_temperature = 0.005
-        out_tokens = torch.tensor(out_tokens[:-1], device=device).unsqueeze(0)
-        state = state[:, :-1].to(device)
+        if use_lora_model==False:
+            # ------------------ 计算得分模块 -------------------- #
+            # print(out_tokens)
+            # reward_temperature = 0.005
+            out_tokens = torch.tensor(out_tokens[:-1], device=device).unsqueeze(0)
+            state = state[:, :-1].to(device)
+            assert state.shape[0] == 1, state.shape
+            y_pred, _= self.llm.forward_one_step(state, 
+                                                masks=torch.tril(torch.ones((1, state.shape[1], state.shape[1]), 
+                                                                            device=device)).to(torch.bool)
+                                                )
+            logits = self.llm_decoder(y_pred)
+            # 去除 prompt 部分的得分（从 prompt 最后一个概率开始）
+            # get rid of the first few tokens
+            logits = logits[:, prompt_len - 1 :]
+            # softmax 转化成每组词汇的概率
+            logprob = logits.log_softmax(-1)
+            # 提取原来输入的采样后的语句中的生成部分的 token id 序列，并进行维度扩展
+            token_ids = out_tokens.unsqueeze(-1)
+            # 收集之前生成的每句话的 token_ids 对应的概率的对数
+            logPF = logprob[:, :-1].gather(-1, token_ids).squeeze(-1)
+            print(f"chosen token reward(logPF): {logPF}")
+            print(f"chosen token ids: {out_tokens}")
+            # 逐步累加每句话的采样的所有词汇的概率，即每步可以停止时，当前生成的句子的概率之和
+            logP = logPF.cumsum(dim=-1)  # logP(generated[:i+1] | prompt)，即给定 prompt 下，生成的句子的概率之和
+            # logP /= reward_temperature
+            # ------------------- 尝试添加 baseline -------------------- #
+            # logP = logP - (logP.sum(dim=0)/logP.shape[0])
+            # logP = logP / torch.arange(1, logP.shape[1]+1, dtype=logP.dtype, device=logP.device).unsqueeze(0)
+            # ------------------- 尝试添加 baseline -------------------- #
+            # print(f"chosen token cumsum(logP): {logP}")
+            # 获取每句话所有词汇位置的终止标记的概率，并作为初始 reward
+            reward = logprob[
+                :, :, self.speech_token_size
+            ]  # logP(generated[i+1]=term | prompt + generated[:i+1])，在i+1处停止时的概率
+            # reward /= reward_temperature
+            print(f"end token reward: {reward}")
+            # 加上之前停止时候的概率，就得到了在任意一个地方停止时整个句子的生成概率
+            reward[:, 1:] += logP  # logP(generated[:i] + term | prompt)
+            # 标识哪些位置不是终止令牌，标识从生成的位置开始，一旦遇到终止令牌标记则标志为 false，否则为 true
+            non_term_mask = (out_tokens != self.speech_token_size)
+            # 在每一段句子中的最开始添加一个 true（即添加一列 true）
+            non_term_mask = torch.cat(
+                (
+                    non_term_mask.new_ones(non_term_mask.shape[0], 1),
+                    non_term_mask,
+                ),
+                dim=-1,
+            )  # Start (i.e., empty) state has never terminated（即还未生成任何东西一定不是终止符）
+            # 将实际中的终止标记位置后续的奖励都设置为 0
+            reward[~non_term_mask] = 0.0
+            # 将小于最小句子长度的句子奖励设置为 -99，防止被选择。
+            min_len = 1
+            reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -99, reward)
+
+            # reward /= reward_temperature
+            print("This sentence got reward of")
+            print(reward)
+            print(f"end reward = {reward[0, -1]}")
+
+    @torch.inference_mode()
+    def cal_lora_model_reward(self,
+            text: torch.Tensor,
+            text_len: torch.Tensor,
+            prompt_text: torch.Tensor,
+            prompt_text_len: torch.Tensor,
+            prompt_speech_token: torch.Tensor,
+            prompt_speech_token_len: torch.Tensor,
+            embedding: torch.Tensor,
+            out_tokens: torch.Tensor,
+    ) -> Generator[torch.Tensor, None, None]:
+        device = text.device
+        text = torch.concat([prompt_text, text], dim=1)
+        text_len += prompt_text_len
+        text = self.llm.model.model.embed_tokens(text)
+
+        # 2. encode embedding
+        embedding = torch.zeros(1, 0, self.llm_input_size, dtype=text.dtype).to(device).to(text.dtype)
+
+        # 3. concat llm_input
+        sos_eos_emb = self.llm_embedding.weight[self.sos_eos].reshape(1, 1, -1)
+        task_id_emb = self.llm_embedding.weight[self.task_id].reshape(1, 1, -1)
+        if prompt_speech_token_len != 0:
+            prompt_speech_token_emb = self.speech_embedding(prompt_speech_token)
+        else:
+            prompt_speech_token_emb = torch.zeros(1, 0, self.llm_input_size, dtype=text.dtype).to(device)
+        lm_input = torch.concat([sos_eos_emb, embedding, text, task_id_emb, prompt_speech_token_emb], dim=1)
+        prompt_len = lm_input.shape[1]
+
+        # 5. step by step decode
+        # out_tokens = []
+        state = lm_input.clone()
+        cache = None
+        lm_input = self.speech_embedding(out_tokens.unsqueeze(0))
+        state = torch.cat([state, lm_input], dim=1)
+
+        out_tokens = out_tokens.unsqueeze(0)
         assert state.shape[0] == 1, state.shape
-        if use_lora_model:
-            self.llm.disable_adapter_layers()
         y_pred, _= self.llm.forward_one_step(state, 
-                                             masks=torch.tril(torch.ones((1, state.shape[1], state.shape[1]), 
-                                                                         device=device)).to(torch.bool)
+                                            masks=torch.tril(torch.ones((1, state.shape[1], state.shape[1]), 
+                                                                        device=device)).to(torch.bool)
                                             )
         logits = self.llm_decoder(y_pred)
         # 去除 prompt 部分的得分（从 prompt 最后一个概率开始）
@@ -413,6 +504,7 @@ class Qwen2LM(torch.nn.Module):
         # 收集之前生成的每句话的 token_ids 对应的概率的对数
         logPF = logprob[:, :-1].gather(-1, token_ids).squeeze(-1)
         print(f"chosen token reward(logPF): {logPF}")
+        print(f"chosen token ids: {out_tokens}")
         # 逐步累加每句话的采样的所有词汇的概率，即每步可以停止时，当前生成的句子的概率之和
         logP = logPF.cumsum(dim=-1)  # logP(generated[:i+1] | prompt)，即给定 prompt 下，生成的句子的概率之和
         # logP /= reward_temperature
@@ -420,7 +512,7 @@ class Qwen2LM(torch.nn.Module):
         # logP = logP - (logP.sum(dim=0)/logP.shape[0])
         # logP = logP / torch.arange(1, logP.shape[1]+1, dtype=logP.dtype, device=logP.device).unsqueeze(0)
         # ------------------- 尝试添加 baseline -------------------- #
-        print(f"chosen token cumsum(logP): {logP}")
+        # print(f"chosen token cumsum(logP): {logP}")
         # 获取每句话所有词汇位置的终止标记的概率，并作为初始 reward
         reward = logprob[
             :, :, self.speech_token_size
@@ -442,14 +534,10 @@ class Qwen2LM(torch.nn.Module):
         # 将实际中的终止标记位置后续的奖励都设置为 0
         reward[~non_term_mask] = 0.0
         # 将小于最小句子长度的句子奖励设置为 -99，防止被选择。
-        min_len = 1
-        reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -99, reward)
+        # min_len = 1
+        # reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -99, reward)
 
         # reward /= reward_temperature
-
-        if use_lora_model:
-            self.llm.enable_adapter_layers()
-
         print("This sentence got reward of")
         print(reward)
         print(f"end reward = {reward[0, -1]}")

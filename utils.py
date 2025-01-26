@@ -83,11 +83,11 @@ def score_fast(
     # ------------------- 尝试为term token添加阈值 penalty -------------------- #
     # 加上之前停止时候的概率，就得到了在任意一个地方停止时整个句子的生成概率
     reward[:, 1:] += logP  # logP(generated[:i] + term | prompt)
-    # ------------------- 尝试添加 baseline 和修改温度 -------------------- #
+    # ------------------- 尝试添加 baseline 、除以长度、修改温度 -------------------- #
     # logP = logP - (logP.sum(dim=0)/logP.shape[0])
     # logP = logP / torch.arange(1, logP.shape[1]+1, dtype=logP.dtype, device=logP.device).unsqueeze(0)
-    # reward[:, 1:] = reward[:, 1:] / torch.arange(1, reward.shape[1], dtype=reward.dtype, device=reward.device).unsqueeze(0)
-    # ------------------- 尝试添加 baseline -------------------- #
+    reward[:, 1:] = reward[:, 1:] / torch.arange(1, reward.shape[1], dtype=reward.dtype, device=reward.device).unsqueeze(0)
+    # ------------------- 尝试添加 baseline 、除以长度、修改温度 -------------------- #
     # 标识哪些位置不是终止令牌，标识从生成的位置开始，一旦遇到终止令牌标记则标志为 false，否则为 true
     non_term_mask = (generated_tokens != termination_token_id)
     # 在每一段句子中的最开始添加一个 true（即添加一列 true）
@@ -124,7 +124,7 @@ class FrozenModelSentenceGivenPrompt:
             or sentence_validator is not None
             and valid_sentence_alpha is not None
         )
-
+        # print(f"input temperature: {temperature}")
         self.temperature = temperature
         self.sentence_token_id = sentence_token_id
         self.vocab_nice_mask = vocab_nice_mask
@@ -154,8 +154,11 @@ class FrozenModelSentenceGivenPrompt:
             vocab_alpha=self.vocab_alpha,                   # 词汇偏好（好与坏）概率补偿
             min_len=self.min_len,                           # 最小句子长度约束
         )
+        # print(f"reward: {reward}")
+        # print(f"temperature: {self.temperature}")
         reward /= self.temperature
         reward_unpenalized /= self.temperature
+        # print(f"changed reward: {reward}")
         base_to_lora(model)
         if training:
             model.train()
@@ -482,17 +485,19 @@ def trajectory_balance_loss(
     #     - log_r[:, 1:]
     #     - log_pterm[:, :-1]
     # )
-    print(f"log_r: {log_r}")
-    print(f"log_pf: {log_pf}")
-    print(f"log_pterm: {log_pterm}")
+    # print(f"log_r: {log_r}")
+    # print(f"log_pf: {log_pf}")
+    # print(f"log_pterm: {log_pterm}")
     # delta_cumsum = torch.cat([torch.zeros_like(delta[:, :1]), delta], 1).cumsum(1)
     log_r_last = log_r.gather(1, (log_r!=0).cumsum(1).argmax(1).unsqueeze(1))
     log_pterm_last = log_pterm.gather(1, (log_pterm!=0).cumsum(1).argmax(1).unsqueeze(1))
+    # log_pf_end_idx = (log_pf!=0).cumsum(1).argmax(1).unsqueeze(1)
     log_pf_sum = log_pf.cumsum(1)[:, -1].unsqueeze(1)
+    # log_pf_sum /= (log_pf_end_idx+1)
     
-    print(f"log_r_last: {log_r_last}")
-    print(f"log_pterm_last: {log_pterm_last}")
-    print(f"log_pf_sum: {log_pf_sum}")
+    # print(f"log_r_last: {log_r_last}")
+    # print(f"log_pterm_last: {log_pterm_last}")
+    # print(f"log_pf_sum: {log_pf_sum}")
     # Get a mask for tokens after the termination token in the generated_text
     # 其中，已经结束的为 true
     # 刚结束和还未结束的为 false
@@ -508,7 +513,7 @@ def trajectory_balance_loss(
         # log_pf_sum + log_pterm_last - log_r_last
     ) ** 2
     # print(f"delta_cumsum[:, subtraj_len:]: {delta_cumsum[:, subtraj_len:]}, delta_cumsum[:, :-subtraj_len]: {delta_cumsum[:, :-subtraj_len]}")
-    print(f"subtb_term: {subtb_term}")
+    # print(f"subtb_term: {subtb_term}")
     # subtb_term[mask[:, subtraj_len - 1 :]] = 0
     # print(f"changed subtb_term: {subtb_term}")
     batch_loss += subtb_lambda ** (subtraj_len - 1) * subtb_term.sum()
@@ -516,7 +521,7 @@ def trajectory_balance_loss(
         # subtb_lambda ** (subtraj_len - 1) * (~mask[:, subtraj_len - 1 :]).sum()
         generated_text.shape[0]
     )
-    print(f"batch_loss: {batch_loss}, total_lambda: {total_lambda}")
+    # print(f"batch_loss: {batch_loss}, total_lambda: {total_lambda}")
     batch_loss /= total_lambda
 
     return batch_loss
