@@ -573,7 +573,7 @@ def modified_subtb_loss_without_eos_reward(
             subtb_lambda ** (subtraj_len - 1) * (~mask[:, subtraj_len - 1 :]).sum()
         )
     batch_loss /= total_lambda
-    batch_loss += log_pterm.gather(1, (log_pterm!=0).cumsum(1).argmax(1).unsqueeze(1))
+    batch_loss += ((log_pterm.gather(1, (log_pterm!=0).cumsum(1).argmax(1).unsqueeze(1)))**2).sum()/generated_text.shape[0]
 
     return batch_loss
 
