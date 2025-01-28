@@ -319,6 +319,7 @@ class Qwen2LM(torch.nn.Module):
             sampling: int = 25,
             max_token_text_ratio: float = 20,
             min_token_text_ratio: float = 2,
+            vocab_alpha = -50,
             use_lora_sampling = False,
             use_lora_model = False,
     ) -> Generator[torch.Tensor, None, None]:
@@ -344,6 +345,11 @@ class Qwen2LM(torch.nn.Module):
         min_len = int((text_len - prompt_text_len) * min_token_text_ratio)
         max_len = int((text_len - prompt_text_len) * max_token_text_ratio)
 
+        # 4.5 add vocab_naughty_mask = [1950, 4137, 2031]
+        vocab_naughty = [1950, 4137, 2031, 4218]
+        vocab_naughty_mask = torch.zeros(self.speech_token_size+3, dtype=torch.bool)
+        vocab_naughty_mask[vocab_naughty] = True
+
         # 5. step by step decode
         out_tokens = []
         state = lm_input.clone()
@@ -354,6 +360,10 @@ class Qwen2LM(torch.nn.Module):
                                                       cache=cache)
             if use_lora_sampling == False:
                 logp = self.llm_decoder(y_pred[:, -1]).log_softmax(dim=-1)
+                # ---------------- 如果想要使用直接手段不采样 termination token 的话 -------------#
+                # if i < min_len:
+                #     logp[:, self.speech_token_size] = -torch.inf
+                # ---------------- 如果想要使用直接手段不采样 termination token 的话 -------------#
                 top_ids = self.sampling_ids(logp.squeeze(dim=0), out_tokens, sampling, ignore_eos=True if i < min_len else False).item()
             else:
                 # ---------------- GFN Sampling ----------------- #
@@ -371,10 +381,13 @@ class Qwen2LM(torch.nn.Module):
                 elif i >= max_len-1:
                     # if we've reached the maximum length, set the probability of terminating to 1
                     mask = [True] * modified_logits.shape[1]
-                    mask[self.speech_token_size] = False
+                    mask[self.speech_token_size+3] = False
                     modified_logits[:, mask] = -torch.inf
                 # 将CosyVoice的非法词汇概率设置为负数
                 modified_logits[:, self.speech_token_size+1:] = -torch.inf
+                if vocab_naughty_mask is not None:
+                    # print(f"modified_logits.shape: {modified_logits.shape}")
+                    modified_logits[:, vocab_naughty_mask] += vocab_alpha
                 # 进行温度处理，让分布更尖或者更平缓
                 prob = (modified_logits / temperature).softmax(dim=-1)
                 # 根据概率采样下一个token，生成每一句的下一个 token id
@@ -461,6 +474,7 @@ class Qwen2LM(torch.nn.Module):
             prompt_speech_token_len: torch.Tensor,
             embedding: torch.Tensor,
             out_tokens: torch.Tensor,
+            vocab_alpha = -50,
     ) -> Generator[torch.Tensor, None, None]:
         device = text.device
         text = torch.concat([prompt_text, text], dim=1)
@@ -480,6 +494,12 @@ class Qwen2LM(torch.nn.Module):
         lm_input = torch.concat([sos_eos_emb, embedding, text, task_id_emb, prompt_speech_token_emb], dim=1)
         prompt_len = lm_input.shape[1]
 
+        # 4.5 add vocab_naughty_mask = [1950, 4137, 2031]
+        vocab_naughty = [1950, 2031, 4137, 4218]
+        vocab_naughty_mask = torch.zeros(self.speech_token_size+3, dtype=torch.bool)
+        vocab_naughty_mask[vocab_naughty] = True
+        # print("666666666666666666666666666666666")
+
         # 5. step by step decode
         # out_tokens = []
         state = lm_input.clone()
@@ -497,6 +517,9 @@ class Qwen2LM(torch.nn.Module):
         # 去除 prompt 部分的得分（从 prompt 最后一个概率开始）
         # get rid of the first few tokens
         logits = logits[:, prompt_len - 1 :]
+        # vocab_naughty_mask = [1950, 4137, 2031]
+        if vocab_naughty_mask is not None:
+            logits[:, :, vocab_naughty_mask] += vocab_alpha
         # softmax 转化成每组词汇的概率
         logprob = logits.log_softmax(-1)
         # 提取原来输入的采样后的语句中的生成部分的 token id 序列，并进行维度扩展

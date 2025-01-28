@@ -64,6 +64,7 @@ def score_fast(
     elif vocab_naughty_mask is not None:
         # add vocab_alpha to the logits of the masked vocab items
         logits[:, :, vocab_naughty_mask] += vocab_alpha
+    logits[:, :, termination_token_id+1:] = -torch.inf
     # softmax 转化成每组词汇的概率
     logprob = logits.log_softmax(-1)
     # 提取原来输入的采样后的语句中的生成部分的 token id 序列，并进行维度扩展
@@ -86,7 +87,7 @@ def score_fast(
     # ------------------- 尝试添加 baseline 、除以长度、修改温度 -------------------- #
     # logP = logP - (logP.sum(dim=0)/logP.shape[0])
     # logP = logP / torch.arange(1, logP.shape[1]+1, dtype=logP.dtype, device=logP.device).unsqueeze(0)
-    reward[:, 1:] = reward[:, 1:] / torch.arange(1, reward.shape[1], dtype=reward.dtype, device=reward.device).unsqueeze(0)
+    # reward[:, 1:] = reward[:, 1:] / torch.arange(1, reward.shape[1], dtype=reward.dtype, device=reward.device).unsqueeze(0)
     # ------------------- 尝试添加 baseline 、除以长度、修改温度 -------------------- #
     # 标识哪些位置不是终止令牌，标识从生成的位置开始，一旦遇到终止令牌标记则标志为 false，否则为 true
     non_term_mask = (generated_tokens != termination_token_id)
@@ -275,7 +276,7 @@ def generate_and_return_termination_logprob(
     # 每一步都生成并返回句子的终止概率
     # generate and return the probability of terminating at every step
     # 表示哪些序列仍在生成状态，初始时所有序列为活跃状态。
-    min_len = encoded_prompt["target_text_token_len"]*0+1
+    min_len = encoded_prompt["target_text_token_len"]*2
     encoded_prompt = encoded_prompt["lm_input"]
     active_seqs = torch.ones(encoded_prompt.size(0)).bool().to(encoded_prompt.device)
     # 存储当前生成的状态
@@ -364,6 +365,7 @@ def generate_and_return_termination_logprob(
         if vocab_nice_mask is not None:
             logits[:, ~vocab_nice_mask] += vocab_alpha
         if vocab_naughty_mask is not None:
+            # print(vocab_naughty_mask)
             logits[:, vocab_naughty_mask] += vocab_alpha
         # 计算对应概率
         logprob = logits.log_softmax(dim=-1)

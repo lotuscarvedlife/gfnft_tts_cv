@@ -75,10 +75,10 @@ class CosyVoiceModel:
             # self.llm = PeftModel.from_pretrained(self.llm, lora_model)
             self.llm = get_peft_model(self.llm, hydra.utils.instantiate(lora_config))
             lora_weights = torch.load(lora_model, map_location=self.device)["state_dict"]
-            print(self.llm)
+            # print(self.llm)
             lora_weights = {k.replace("model.", "", 1): v for k, v in lora_weights.items()}
             self.llm.load_state_dict(lora_weights, strict=False)
-            print(self.llm)
+            # print(self.llm)
         self.llm.to(self.device).eval()
         # ----------------------- for test ----------------------- #
         # # print(self.llm)

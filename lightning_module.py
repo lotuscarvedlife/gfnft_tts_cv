@@ -110,6 +110,7 @@ class NextSentenceGFNTask(LightningModule):
             prompt,                                                     # 传入 prompt
             reward_fn=reward_fn,                                        # 传入奖励函数
             termination_token_id=self.end_of_sentence_token_id,         # 句子结束符的 token id
+            vocab_naughty_mask=self.hparams.illegal_token_mask,
             min_len=self.hparams.min_sentence_len,                      # 最小句子长度
             max_len=self.hparams.max_sentence_len,                      # 最大句子长度
             temperature=pf_temperature,                                 # 采样温度

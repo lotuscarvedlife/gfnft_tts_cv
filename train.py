@@ -179,7 +179,16 @@ def train(config: DictConfig):
     # # 将掩码转换为NumPy数组
     # illegal_token_mask = illegal_token_mask.numpy()
 
-    illegal_token_mask = None
+    # 注意，这里的 mask 参考的是模型输出层的数量为 model.speech_token_size+3
+    illegal_token_mask = torch.zeros(model.speech_token_size+3, dtype=torch.bool)
+    illegal_tokens = OmegaConf.to_container(config.task.constraints.illegal_tokens)
+    illegal_tokens = [[t] for t in illegal_tokens]
+    assert all(len(t) == 1 for t in illegal_tokens)
+    illegal_tokens = [t[0] for t in illegal_tokens]
+    illegal_token_mask[illegal_tokens] = True
+    illegal_token_mask = illegal_token_mask.numpy()
+
+    # print_all_and_exit(True, illegal_tokens = illegal_tokens)
 
     # 设置奖励函数
     reward = get_reward(config, end_of_sentence_token_id, illegal_token_mask)
