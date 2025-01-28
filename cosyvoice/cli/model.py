@@ -122,6 +122,7 @@ class CosyVoiceModel:
         # ---------------- 可调整部分 ------------------ #
         use_lora_sampling = True
         use_lora_model = True
+        vocab_naughty = [1950, 2031, 4137, 4218]
         # ---------------- 可调整部分 ------------------ #
         with self.llm_context:
             for i in self.llm.inference(text=text.to(self.device),
@@ -132,7 +133,8 @@ class CosyVoiceModel:
                                         prompt_speech_token_len=torch.tensor([llm_prompt_speech_token.shape[1]], dtype=torch.int32).to(self.device),
                                         embedding=llm_embedding.to(self.device),
                                         use_lora_sampling = use_lora_sampling,
-                                        use_lora_model = use_lora_model):
+                                        use_lora_model = use_lora_model,
+                                        vocab_naughty = vocab_naughty):
                 self.tts_speech_token_dict[uuid].append(i)
         if use_lora_model:
             self.llm.base_model.disable_adapter_layers()
@@ -144,7 +146,8 @@ class CosyVoiceModel:
                                            prompt_speech_token=llm_prompt_speech_token.to(self.device),
                                            prompt_speech_token_len=torch.tensor([llm_prompt_speech_token.shape[1]], dtype=torch.int32).to(self.device),
                                            embedding=llm_embedding.to(self.device),
-                                           out_tokens=out_tokens
+                                           out_tokens=out_tokens,
+                                           vocab_naughty = vocab_naughty
                                           )
             self.llm.base_model.enable_adapter_layers()
         self.llm_end_dict[uuid] = True

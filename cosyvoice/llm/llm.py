@@ -322,6 +322,7 @@ class Qwen2LM(torch.nn.Module):
             vocab_alpha = -50,
             use_lora_sampling = False,
             use_lora_model = False,
+            vocab_naughty = None,
     ) -> Generator[torch.Tensor, None, None]:
         device = text.device
         text = torch.concat([prompt_text, text], dim=1)
@@ -346,9 +347,10 @@ class Qwen2LM(torch.nn.Module):
         max_len = int((text_len - prompt_text_len) * max_token_text_ratio)
 
         # 4.5 add vocab_naughty_mask = [1950, 4137, 2031]
-        vocab_naughty = [1950, 4137, 2031, 4218]
-        vocab_naughty_mask = torch.zeros(self.speech_token_size+3, dtype=torch.bool)
-        vocab_naughty_mask[vocab_naughty] = True
+        vocab_naughty_mask = None
+        if vocab_naughty is not None:
+            vocab_naughty_mask = torch.zeros(self.speech_token_size+3, dtype=torch.bool)
+            vocab_naughty_mask[vocab_naughty] = True
 
         # 5. step by step decode
         out_tokens = []
@@ -475,6 +477,7 @@ class Qwen2LM(torch.nn.Module):
             embedding: torch.Tensor,
             out_tokens: torch.Tensor,
             vocab_alpha = -50,
+            vocab_naughty = None,
     ) -> Generator[torch.Tensor, None, None]:
         device = text.device
         text = torch.concat([prompt_text, text], dim=1)
@@ -495,9 +498,10 @@ class Qwen2LM(torch.nn.Module):
         prompt_len = lm_input.shape[1]
 
         # 4.5 add vocab_naughty_mask = [1950, 4137, 2031]
-        vocab_naughty = [1950, 2031, 4137, 4218]
-        vocab_naughty_mask = torch.zeros(self.speech_token_size+3, dtype=torch.bool)
-        vocab_naughty_mask[vocab_naughty] = True
+        vocab_naughty_mask = None
+        if vocab_naughty is not None:
+            vocab_naughty_mask = torch.zeros(self.speech_token_size+3, dtype=torch.bool)
+            vocab_naughty_mask[vocab_naughty] = True
         # print("666666666666666666666666666666666")
 
         # 5. step by step decode
