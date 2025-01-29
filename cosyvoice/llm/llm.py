@@ -383,7 +383,7 @@ class Qwen2LM(torch.nn.Module):
                 elif i >= max_len-1:
                     # if we've reached the maximum length, set the probability of terminating to 1
                     mask = [True] * modified_logits.shape[1]
-                    mask[self.speech_token_size+3] = False
+                    mask[self.speech_token_size] = False
                     modified_logits[:, mask] = -torch.inf
                 # 将CosyVoice的非法词汇概率设置为负数
                 modified_logits[:, self.speech_token_size+1:] = -torch.inf

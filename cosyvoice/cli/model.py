@@ -122,7 +122,8 @@ class CosyVoiceModel:
         # ---------------- 可调整部分 ------------------ #
         use_lora_sampling = True
         use_lora_model = True
-        vocab_naughty = [1950, 2031, 4137, 4218]
+        # vocab_naughty = [1950, 2031, 4137, 4218]
+        vocab_naughty = None
         # ---------------- 可调整部分 ------------------ #
         with self.llm_context:
             for i in self.llm.inference(text=text.to(self.device),
