@@ -69,7 +69,7 @@ class CosyVoiceModel:
 
     def load(self, llm_model, flow_model, hift_model, lora_model=None, lora_config=None):
         self.llm.load_state_dict(torch.load(llm_model, map_location=self.device), strict=True)
-        # 加载 lora 微调模型
+        # 加载 lora 微调模型，注释掉下面部分将不再加载 lora 模型
         if lora_model != None and lora_config != None:
             # print("6666666666666666666666666666666666666666666666666666")
             # self.llm = PeftModel.from_pretrained(self.llm, lora_model)
@@ -121,7 +121,7 @@ class CosyVoiceModel:
     def llm_job(self, text, prompt_text, llm_prompt_speech_token, llm_embedding, uuid):
         # ---------------- 可调整部分 ------------------ #
         use_lora_sampling = True
-        use_lora_model = True
+        use_lora_model = True       # 这里目的是计算 reward 的时候使用 base 模型，设置 False 并不会不加载 lora 模型
         # vocab_naughty = [1950, 2031, 4137, 4218]
         vocab_naughty = None
         # ---------------- 可调整部分 ------------------ #
