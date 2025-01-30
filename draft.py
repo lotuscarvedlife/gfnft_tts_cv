@@ -16,10 +16,15 @@ import torch
 # print(a)
 
 logPF = torch.tensor([[1,2,0,0,0],
-                  [6,5,4,0,0],
+                  [7,5,4,0,0],
                   [3,4,5,6,0]], dtype=float)
-a = [1,2]
-logPF[:, a] += 4
+
+top2_values, _ = torch.topk(logPF, k=2, dim=-1)
+max_prob = top2_values[:, 0]
+second_max_prob = top2_values[:, 1]
+result_tensor = max_prob - second_max_prob
+# a = [1,2]
+# logPF[:, a] += 4
 # logPF = logPF.cumsum(1)[:, -1].unsqueeze(1)
 # logPF *= torch.tensor([-1], dtype=logPF.dtype)
 # logPF = torch.where(logPF<torch.tensor([-5], dtype=logPF.dtype),
@@ -31,4 +36,4 @@ logPF[:, a] += 4
 # # 使用广播机制将 divisors 扩展到与 tensor 相同的形状，并执行逐元素除法
 # logPF[:, 1:] = logPF[:, 1:] / torch.arange(1, logPF.shape[1], dtype=logPF.dtype, device=logPF.device).unsqueeze(0)
 
-print(logPF)
+print(result_tensor)

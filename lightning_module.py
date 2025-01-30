@@ -178,7 +178,7 @@ class NextSentenceGFNTask(LightningModule):
         
         # 计算 modified_subtb_loss（子轨迹平衡损失），也是 GFN 的损失
         # Get the GFN loss
-        loss = modified_subtb_loss_without_eos_reward(
+        loss = trajectory_balance_loss(
             log_pf=log_pf,
             log_r=log_r,
             log_pterm=log_pterm,
@@ -269,7 +269,7 @@ class NextSentenceGFNTask(LightningModule):
         )
 
         # Get the GFN loss
-        loss = modified_subtb_loss_without_eos_reward(
+        loss = trajectory_balance_loss(
             log_pf=log_pf,
             log_r=log_r,
             log_pterm=log_pterm,

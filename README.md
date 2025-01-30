@@ -54,7 +54,7 @@
 - `data_preprocessor.py`：数据的预处理代码，用于制作模型训练的 tensor 并保存，这样在训练的过程中就不需要调用 tokenizer 等多余的模型文件，并加速模型的训练了。需要配合数据集使用。可以修改增加传入的数据内容
 - `train.py`：训练的入口文件，可以指定是否使用非法 token mask（用于设置静音等 token 的 penalty）、训练前的 sanity val check 验证步数等
 - `lightning_module.py`：训练的主要框架，这里我们可以设置使用的loss，调整学习率变化，调整 reward 温度变化
-- `utils.py`：训练的工具，大部分重要代码都在这里，如调整 reward、调整最小长度的 reward、调整训练时候的最小长度、调整计算loss中间的过程等。
+- `utils.py`：训练的工具，大部分重要代码都在这里，如调整更换 reward、调整最小长度的 reward、调整训练时候的最小长度、调整计算loss中间的过程等。
 
 ### 2.2 推理部分
 

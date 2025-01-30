@@ -35,7 +35,7 @@ eval:
 
 reward:
   temp_start: 1.0     # 初始温度参数
-  temp_end: 0.875       # 最终温度参数
+  temp_end: 1.0       # 最终温度参数,former is 0.8
   temp_horizon: 750   # 温度变化的时间范围，即在前750步骤内温度将从初始温度线性降低至最终温度为0.8。
   vocab_alpha: -50
   sentence_validator: null
@@ -50,7 +50,7 @@ callbacks:
     filename: "epoch={epoch:03d}"
     auto_insert_metric_name: True
   - _target_: pytorch_lightning.callbacks.ModelCheckpoint
-    every_n_epochs: 1
+    every_n_epochs: 25
     dirpath: ${save_dir}/checkpoints/periodic/${now:%Y-%m-%d}_${now:%H-%M-%S}
     filename: "epoch_{epoch:03d}_periodic"
     save_top_k: -1

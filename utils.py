@@ -106,6 +106,77 @@ def score_fast(
     # reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -99, reward)
     return reward, reward_unpenalized
 
+@torch.no_grad()
+def score_fast_confidence(
+    model,                      # base model，非微调模型
+    encoded_input,              # 编码后的输入（batch），在后面使用的时候就是已经采样好的多条语句的 token id 序列
+    generated_tokens,
+    termination_token_id,       # 句号 token id
+    min_len,                    # 最小句子长度
+    skip_first,                 # 为 prompt_length
+    vocab_nice_mask=None,
+    vocab_naughty_mask=None,
+    vocab_alpha=-99,
+    prompt_cache=None,      
+):
+    # 再次获取模型输出下一个 token 的得分
+    if prompt_cache is None:
+        y_pred = model.llm.forward_all(encoded_input)
+        logits = model.llm_decoder(y_pred)
+    else:
+        # NOTE: 这里我看应该用不着，所以写死了
+        # prompt_cache[1] contains past_key_values which need to be reshaped to the right batch size from encoded_input
+        raise NotImplementedError("DO NOT USE CACHE for scoring")
+        batched_prompt_cache = tuple(
+            tuple(
+                [
+                    prompt_cache[1][i][j].repeat(encoded_input.shape[0], 1, 1, 1)
+                    for j in range(len(prompt_cache[1][i]))
+                ]
+            )
+            for i in range(len(prompt_cache[1]))
+        )
+        logits = model(encoded_input, past_key_values=batched_prompt_cache).logits
+    # 去除 prompt 部分的得分（从 prompt 最后一个概率开始）
+    # get rid of the first few tokens
+    logits = logits[:, skip_first - 1 :]
+    # 根据词汇偏好（好与坏）进行概率补偿
+    # score the log probability of the input sequence while ignoring termination and padding tokens
+    if vocab_nice_mask is not None:
+        # add vocab_alpha to the logits of the unmasked vocab items
+        logits[:, :, ~vocab_nice_mask] += vocab_alpha
+    elif vocab_naughty_mask is not None:
+        # add vocab_alpha to the logits of the masked vocab items
+        logits[:, :, vocab_naughty_mask] += vocab_alpha
+    logits[:, :, termination_token_id+1:] = -torch.inf
+    # softmax 转化成每组词汇的概率
+    logprob = logits.log_softmax(-1)
+
+    top2_values, _ = torch.topk(logprob, k=2, dim=-1)
+    max_prob = top2_values[:, :, 0]
+    second_max_prob = top2_values[:, :, 1]
+    reward = max_prob - second_max_prob
+    reward = reward.cumsum(dim=-1)
+    # normalization
+    reward[:, 1:] = reward[:, 1:] / torch.arange(1, reward.shape[1], dtype=reward.dtype, device=reward.device).unsqueeze(0)
+    
+    # 标识哪些位置不是终止令牌，标识从生成的位置开始，一旦遇到终止令牌标记则标志为 false，否则为 true
+    non_term_mask = (generated_tokens != termination_token_id)
+    # 在每一段句子中的最开始添加一个 true（即添加一列 true）
+    non_term_mask = torch.cat(
+        (
+            non_term_mask.new_ones(non_term_mask.shape[0], 1),
+            non_term_mask,
+        ),
+        dim=-1,
+    )  # Start (i.e., empty) state has never terminated（即还未生成任何东西一定不是终止符）
+    # 将实际中的终止标记位置后续的奖励都设置为 0
+    reward[~non_term_mask] = 0.0
+    reward_unpenalized = reward.clone()
+    # 将小于最小句子长度的句子奖励设置为 -99。
+    # reward = torch.where(non_term_mask.cumsum(dim=-1) - 1 < min_len, -99, reward)
+    return reward, reward_unpenalized
+
 
 class FrozenModelSentenceGivenPrompt:
     def __init__(
@@ -144,7 +215,7 @@ class FrozenModelSentenceGivenPrompt:
         training = model.training
         model.eval()
         # 计算奖励分数
-        reward, reward_unpenalized = score_fast(
+        reward, reward_unpenalized = score_fast_confidence(
             model=model,                                    # 基础模型实例
             encoded_input=input_batch,                      # 编码后的输入（batch）
             generated_tokens=generated_tokens,               # [B,T]
