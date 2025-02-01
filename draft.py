@@ -36,8 +36,12 @@ import torch
 # # 使用广播机制将 divisors 扩展到与 tensor 相同的形状，并执行逐元素除法
 # logPF[:, 1:] = logPF[:, 1:] / torch.arange(1, logPF.shape[1], dtype=logPF.dtype, device=logPF.device).unsqueeze(0)
 
-prob = torch.rand([1, 20]).expand(10, -1)
+prob = torch.rand([1, 20])
 print(prob[0])
+prob_1 = prob**(torch.ones_like(prob)*3)
+prob_1.log_softmax(dim=-1)
+prob_2 = torch.log_softmax(prob, dim=-1)
+prob_2 = prob_2*(torch.ones_like(prob)*3)
 
-topk_indices = torch.diag(torch.topk(prob, k=10, dim=-1)[1]).unsqueeze(-1)
-print(topk_indices)
+# topk_indices = torch.diag(torch.topk(prob, k=10, dim=-1)[1]).unsqueeze(-1)
+print(prob_1==prob_2)
