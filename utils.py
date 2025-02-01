@@ -158,7 +158,7 @@ def score_fast_confidence(
     reward = torch.log(max_prob - second_max_prob)
     reward = reward.cumsum(dim=-1)
     # normalization
-    reward = reward / torch.arange(1, reward.shape[1]+1, dtype=reward.dtype, device=reward.device).unsqueeze(0)
+    # reward = reward / torch.arange(1, reward.shape[1]+1, dtype=reward.dtype, device=reward.device).unsqueeze(0)
     
     # 标识哪些位置不是终止令牌，标识从生成的位置开始，一旦遇到终止令牌标记则标志为 false，否则为 true
     non_term_mask = (generated_tokens != termination_token_id)
@@ -484,6 +484,165 @@ def generate_and_return_termination_logprob(
     # add a termination token to the end of the sequence
     return generated_tokens, state, log_pf, log_pterm, log_r, log_r_unpenalized
 
+def confidently_generate_and_return_termination_logprob(
+    model,
+    encoded_prompt,
+    termination_token_id,
+    reward_fn,
+    vocab_nice_mask=None,
+    vocab_naughty_mask=None,
+    vocab_alpha=-99,
+    max_len=10,
+    min_len=0,
+    temperature=1.0,
+    top_k=999999,
+    top_p=1.0,
+    action_seq=None,
+    skip_rewards=False,
+):
+    # 每一步都生成并返回句子的终止概率
+    # generate and return the probability of terminating at every step
+    # 表示哪些序列仍在生成状态，初始时所有序列为活跃状态。
+    min_len = encoded_prompt["target_text_token_len"]*2
+    encoded_prompt = encoded_prompt["lm_input"]
+    active_seqs = torch.ones(encoded_prompt.size(0)).bool().to(encoded_prompt.device)
+    # 存储当前生成的状态
+    state = encoded_prompt.clone()
+    # 存储前向和终止的概率
+    log_pf = []
+    log_pterm = []
+    # 存储句子的生成状态
+    lm_input = state  # For caching hidden states during generation
+    cache = None  # For caching hidden states during generation
+    generated_tokens = []  # 用于存储生成的 token_id
+    # 生成循环，生成次数为最大句子长度
+    for i in range(max_len + 1):
+        # 输入prompt的 token id 序列和 past key values，获取当前步的输出，这是最重要的
+        y_pred, cache = model.llm.forward_one_step(lm_input, 
+                                            masks=torch.tril(torch.ones((1, lm_input.shape[1], lm_input.shape[1]), device=lm_input.device)).to(torch.bool),
+                                            cache=cache)
+
+        # 获取最后一层的 logits，即每个 token 的预测得分，相当于每次都往前推进一个单词（token）
+        # 这个地方多了个 log_softmax, 不知道会不会有问题
+        # logits = model.llm_decoder(y_pred[:, -1]).log_softmax(dim=-1)
+        logits = model.llm_decoder(y_pred[:, -1])
+        # print(logits)
+        # 没有动作序列，则进行自动生成
+        if action_seq is None:
+            with torch.no_grad():
+                # 使用 softmax 转化为概率
+                prob = logits.softmax(dim=-1)
+                modified_logits = logits.clone().detach()
+                # 进行 top-k 采样，只保留概率最高的 K 个 token，其余 token 的概率被设置为零
+                # implement top-k by getting the top-k largest values and setting the rest to 0
+                if top_k < 999999:
+                    modified_logits[prob >= prob.topk(top_k)] = -torch.inf
+                # 进行 top-p 采样，只保留概率和前 K 个 token 的和为 top_p 的 token，其余 token 的概率被设置为零
+                # implement top-p by getting indices in the top-p prob mass and setting the rest to 0
+                if top_p < 1.0:
+                    sorted_probs, _ = torch.sort(prob, dim=-1, descending=True)
+                    cumsum_prob = torch.cumsum(sorted_probs, dim=-1)
+                    nucleus = cumsum_prob < top_p
+                    nucleus = torch.cat(
+                        [
+                            nucleus.new_ones(nucleus.shape[:-1] + (1,)),
+                            nucleus[..., :-1],
+                        ],
+                        dim=-1,
+                    )
+                    modified_logits[~nucleus] = -torch.inf
+                # 如果此时还处于最小长度限制内，则将终止 token 的概率设置为无穷小
+                if i < min_len:
+                    # if we haven't reach the minimum length, set the probability of terminating to 0
+                    modified_logits[:, termination_token_id] = -torch.inf
+                # 如果此时已经达到最大长度限制，则将终止 token 的概率设置为1，其他设置为无穷小
+                elif i >= max_len:
+                    # if we've reached the maximum length, set the probability of terminating to 1
+                    mask = [True] * modified_logits.shape[1]
+                    mask[termination_token_id] = False
+                    modified_logits[:, mask] = -torch.inf
+                # 将非 nice 的词汇的概率设置为负数
+                if vocab_nice_mask is not None:
+                    # add vocab_alpha to the logits of the unmasked vocab items
+                    modified_logits[:, ~vocab_nice_mask] += vocab_alpha
+                # 将非法词汇的概率设置为负数
+                if vocab_naughty_mask is not None:
+                    # add vocab_alpha to the logits of the masked vocab items
+                    modified_logits[:, vocab_naughty_mask] += vocab_alpha
+                # 将CosyVoice的非法词汇概率设置为负数
+                modified_logits[:, termination_token_id+1:] = -torch.inf
+                # 这里将不再进行温度处理，因为会导致不确定性和训练困难
+                prob = (modified_logits).softmax(dim=-1)
+                # 根据概率使用贪心采样获取下一个token id，并在第一个 token 处做多样化处理
+                if i == 0:
+                    token_ids = torch.diag(torch.topk(prob, k=prob.shape[0], dim=-1)[1]).unsqueeze(-1)
+                else:
+                    token_ids = torch.argmax(prob, dim=-1, keepdim=True) # [B, 1]
+        else: # 一般是从奖励缓冲区中进行采样就会有固定序列 
+            if i >= action_seq.size(-1):
+                token_ids = (
+                    torch.ones_like(action_seq[:, 0]) * termination_token_id
+                ).unsqueeze(-1)
+            else:
+                token_ids = action_seq[:, i].unsqueeze(-1)
+        # 根据 active_seqs 标记，将已经终止的语句的此时的 token_id 替换为终止 token_id，后面就不再让他生成了，全加的是终止token_id
+        token_ids = torch.where(
+            active_seqs.unsqueeze(-1),
+            token_ids,
+            termination_token_id,
+        )
+        # 对原来的 logits 根据对应的 mask 进行处理
+        if vocab_nice_mask is not None:
+            logits[:, ~vocab_nice_mask] += vocab_alpha
+        if vocab_naughty_mask is not None:
+            # print(vocab_naughty_mask)
+            logits[:, vocab_naughty_mask] += vocab_alpha
+        # 计算对应概率
+        logprob = logits.log_softmax(dim=-1)
+        # 记录终止概率，只记录 alive 的样本的终止概率，死掉的这一步记为0
+        # 终止概率即下一步输出终止 token 的概率
+        log_pterm.append(
+            torch.where(
+                active_seqs,
+                logprob[:, termination_token_id],
+                0,
+            )
+        )
+        # 更新 active_seqs 标记，如果 token_id 是终止 token id，则标记为 False
+        active_seqs = active_seqs * (token_ids != termination_token_id).squeeze(-1)
+        # 记录前向概率，只记录 alive 的样本的前向概率
+        # 前向概率即本次采样选取的 token 对应的概率，死掉的这一步记为0
+        log_pf.append(
+            torch.where(
+                active_seqs,
+                logprob.gather(-1, token_ids).squeeze(-1),
+                0,
+            )
+        )
+        generated_tokens.append(token_ids)
+        lm_input = model.speech_embedding(token_ids)
+        assert lm_input.shape[0]==state.shape[0] and lm_input.shape[2]==state.shape[2], f"lm_input.shape: {lm_input.shape}, state.shape: {state.shape}"
+        # 拼接 token_id 到 state 中
+        state = torch.cat([state, lm_input], dim=1)
+        # check if all sequences have terminated
+        # 如果所有句子都结束了那就结束
+        if torch.all(~active_seqs):
+            break
+    # 现在每个句子都已经生成完了，这里对列表中的 tensor 进行拼接，变成一整个 tensor
+    log_pf = torch.stack(log_pf, dim=1)
+    log_pterm = torch.stack(log_pterm, dim=1)
+    generated_tokens = torch.cat(generated_tokens, dim=-1)  # [B,T]
+    # 计算奖励，forward 中，skip_rewards=False
+    if skip_rewards:
+        log_r, log_r_unpenalized = None, None
+    else:
+        # 对得到的所有采样语句的 token_id 序列计算奖励分数，剔除最后一个 token，因为这里可以确保是
+        # Reward for all intermediate states (except the last one,
+        # which is guaranteed to be the termination token)
+        log_r, log_r_unpenalized = reward_fn(input_batch=state[:, :-1], generated_tokens=generated_tokens[:, :-1])
+    # add a termination token to the end of the sequence
+    return generated_tokens, state, log_pf, log_pterm, log_r, log_r_unpenalized
+
 # 本函数为 GFN 的子轨迹平衡损失
 def modified_subtb_loss(
     log_pf,
@@ -629,7 +788,7 @@ def trajectory_balance_confidence_loss(
     # print(f"log_pf: {log_pf}")
     # print(f"log_pterm: {log_pterm}")
     # delta_cumsum = torch.cat([torch.zeros_like(delta[:, :1]), delta], 1).cumsum(1)
-    log_r_last = log_r.gather(1, (log_r!=0).cumsum(1).argmax(1).unsqueeze(1)-1)
+    log_r_last = log_r.gather(1, (log_r!=0).cumsum(1).argmax(1).unsqueeze(1)) 
     log_pterm_last = log_pterm.gather(1, (log_pterm!=0).cumsum(1).argmax(1).unsqueeze(1))
     # log_pf_end_idx = (log_pf!=0).cumsum(1).argmax(1).unsqueeze(1)
     log_pf_sum = log_pf.cumsum(1)[:, -1].unsqueeze(1)

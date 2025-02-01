@@ -6,6 +6,7 @@ import torch
 from pytorch_lightning import LightningModule
 from utils import (
     generate_and_return_termination_logprob,
+    confidently_generate_and_return_termination_logprob,
     modified_subtb_loss,
     trajectory_balance_loss,
     modified_subtb_loss_without_eos_reward,
@@ -107,7 +108,7 @@ class NextSentenceGFNTask(LightningModule):
             log_pterm,              # 句子终止概率的对数
             log_r,                  # 奖励的对数
             log_r_unpenalized,      # 未惩罚奖励的对数
-        ) = generate_and_return_termination_logprob(
+        ) = confidently_generate_and_return_termination_logprob(
             self.model,                                                 # 传入 model        
             prompt,                                                     # 传入 prompt
             reward_fn=reward_fn,                                        # 传入奖励函数
