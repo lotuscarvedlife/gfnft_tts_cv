@@ -467,6 +467,112 @@ class Qwen2LM(torch.nn.Module):
             print(f"end reward = {reward[0, -1]}")
 
     @torch.inference_mode()
+    def inference_confidently(
+            self,
+            text: torch.Tensor,
+            text_len: torch.Tensor,
+            prompt_text: torch.Tensor,
+            prompt_text_len: torch.Tensor,
+            prompt_speech_token: torch.Tensor,
+            prompt_speech_token_len: torch.Tensor,
+            embedding: torch.Tensor,
+            sampling: int = 25,
+            max_token_text_ratio: float = 20,
+            min_token_text_ratio: float = 2,
+            # vocab_alpha = -50,
+            # use_lora_sampling = False,
+            # use_lora_model = False,
+            # vocab_naughty = None,
+            # use_repetition_penalty = False,
+            rp_window_size = 20,
+            rp_factor = 15,
+    ) -> Generator[torch.Tensor, None, None]:
+        device = text.device
+        text = torch.concat([prompt_text, text], dim=1)
+        text_len += prompt_text_len
+        text = self.llm.model.model.embed_tokens(text)
+
+        # 2. encode embedding
+        embedding = torch.zeros(1, 0, self.llm_input_size, dtype=text.dtype).to(device).to(text.dtype)
+
+        # 3. concat llm_input
+        sos_eos_emb = self.llm_embedding.weight[self.sos_eos].reshape(1, 1, -1)
+        task_id_emb = self.llm_embedding.weight[self.task_id].reshape(1, 1, -1)
+        if prompt_speech_token_len != 0:
+            prompt_speech_token_emb = self.speech_embedding(prompt_speech_token)
+        else:
+            prompt_speech_token_emb = torch.zeros(1, 0, self.llm_input_size, dtype=text.dtype).to(device)
+        lm_input = torch.concat([sos_eos_emb, embedding, text, task_id_emb, prompt_speech_token_emb], dim=1)
+        prompt_len = lm_input.shape[1]
+
+        # 4. cal min/max_length
+        min_len = int((text_len - prompt_text_len) * min_token_text_ratio)
+        max_len = int((text_len - prompt_text_len) * max_token_text_ratio)
+
+        # 5. step by step decode
+        out_tokens = []
+        state = lm_input.clone()
+        cache = None
+        for i in range(max_len):
+            y_pred, cache = self.llm.forward_one_step(lm_input,
+                                                      masks=torch.tril(torch.ones((1, lm_input.shape[1], lm_input.shape[1]), device=lm_input.device)).to(torch.bool),
+                                                      cache=cache)
+
+            # ---------------- GFN Sampling ----------------- #
+            temperature = 1.0  # 在gfnft中，val 数据集采样里，不设置温度
+            logp = self.llm_decoder(y_pred[:, -1])
+            prob = logp.softmax(dim=-1)
+            modified_logits = logp.clone().detach()
+            assert modified_logits.shape[0]==1 and modified_logits.dim()==2
+            # print(f"end token prob: {modified_logits[:, self.speech_token_size].item()}")
+            # 如果此时还处于最小长度限制内，则将终止 token 的概率设置为无穷小
+            if i < min_len:
+                # if we haven't reach the minimum length, set the probability of terminating to 0
+                modified_logits[:, self.speech_token_size] = -torch.inf
+            # 如果此时已经达到最大长度限制，则将终止 token 的概率设置为1，其他设置为无穷小
+            elif i >= max_len-1:
+                # if we've reached the maximum length, set the probability of terminating to 1
+                mask = [True] * modified_logits.shape[1]
+                mask[self.speech_token_size] = False
+                modified_logits[:, mask] = -torch.inf
+            # 将CosyVoice的非法词汇概率设置为负数
+            modified_logits[:, self.speech_token_size+1:] = -torch.inf
+            last_tokens=None
+            # 进行温度处理，让分布更尖或者更平缓
+            prob = (modified_logits / temperature).softmax(dim=-1)
+            if i != 0:
+                # ----------------- Repeat Penalty ---------------------- #
+                if len(out_tokens) > rp_window_size:
+                    last_tokens = torch.tensor(out_tokens[-rp_window_size:])  # [window]
+                else:
+                    last_tokens = torch.tensor(out_tokens)  # [T]
+                rp_matrix = torch.ones_like(prob)
+                rp_matrix[0, torch.unique(last_tokens)] = rp_factor
+                # print(f"last_tokens: {last_tokens}")
+                # print(f"rp_matrix: {rp_matrix}")
+                prob = prob**rp_matrix
+                # print(f"modified_last_tokens_logits: {modified_logits[0, torch.unique(last_tokens)]}")
+                # ----------------- Repeat Penalty ---------------------- #
+            # 根据概率采样下一个token，生成每一句的下一个 token id
+            if i==0:
+                top_ids = torch.multinomial(prob.squeeze(dim=0), num_samples=1).item()
+            else:
+                # print(f"prob[0, torch.unique(last_tokens)]: {prob[0, torch.unique(last_tokens)]}")
+                top_ids = torch.argmax(prob, dim=-1).item()
+            # print(f"chosen token prob: {modified_logits[:, top_ids].item()}")
+            # ---------------- GFN Sampling ----------------- #
+            if top_ids == self.speech_token_size:
+                break
+            if top_ids > self.speech_token_size:
+                continue
+            # in stream mode, yield token one by one
+            yield top_ids
+            out_tokens.append(top_ids)
+            lm_input = self.speech_embedding.weight[top_ids].reshape(1, 1, -1)
+            state = torch.cat([state, lm_input], dim=1)
+
+
+    @torch.inference_mode()
     def cal_lora_model_reward(self,
             text: torch.Tensor,
             text_len: torch.Tensor,

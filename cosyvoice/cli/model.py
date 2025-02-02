@@ -124,9 +124,24 @@ class CosyVoiceModel:
         use_lora_model = True       # 这里目的是计算 reward 的时候使用 base 模型，设置 False 并不会不加载 lora 模型
         # vocab_naughty = [1950, 2031, 4137, 4218]
         vocab_naughty = None
+        use_confidence_score = True
+        rp_window_size = 20
+        rp_factor = 15
         # ---------------- 可调整部分 ------------------ #
         with self.llm_context:
-            for i in self.llm.inference(text=text.to(self.device),
+            if use_confidence_score:
+                for i in self.llm.inference_confidently(text=text.to(self.device),
+                                            text_len=torch.tensor([text.shape[1]], dtype=torch.int32).to(self.device),
+                                            prompt_text=prompt_text.to(self.device),
+                                            prompt_text_len=torch.tensor([prompt_text.shape[1]], dtype=torch.int32).to(self.device),
+                                            prompt_speech_token=llm_prompt_speech_token.to(self.device),
+                                            prompt_speech_token_len=torch.tensor([llm_prompt_speech_token.shape[1]], dtype=torch.int32).to(self.device),
+                                            embedding=llm_embedding.to(self.device),
+                                            rp_window_size = rp_window_size,
+                                            rp_factor = rp_factor,):
+                    self.tts_speech_token_dict[uuid].append(i)
+            else:
+                for i in self.llm.inference(text=text.to(self.device),
                                         text_len=torch.tensor([text.shape[1]], dtype=torch.int32).to(self.device),
                                         prompt_text=prompt_text.to(self.device),
                                         prompt_text_len=torch.tensor([prompt_text.shape[1]], dtype=torch.int32).to(self.device),
@@ -136,7 +151,7 @@ class CosyVoiceModel:
                                         use_lora_sampling = use_lora_sampling,
                                         use_lora_model = use_lora_model,
                                         vocab_naughty = vocab_naughty):
-                self.tts_speech_token_dict[uuid].append(i)
+                    self.tts_speech_token_dict[uuid].append(i)
         if use_lora_model:
             self.llm.base_model.disable_adapter_layers()
             out_tokens = torch.tensor(self.tts_speech_token_dict[uuid][:-1], device=self.device)

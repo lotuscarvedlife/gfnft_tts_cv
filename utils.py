@@ -589,20 +589,20 @@ def confidently_generate_and_return_termination_logprob(
                     modified_logits[:, vocab_naughty_mask] += vocab_alpha
                 # 将CosyVoice的非法词汇概率设置为负数
                 modified_logits[:, termination_token_id+1:] = -torch.inf
+                # 这里将不再进行温度处理，因为会导致不确定性和训练困难
+                prob = (modified_logits).softmax(dim=-1)
                 # ----------------- Repeat Penalty ---------------------- #
                 if i != 0:
                     if len(generated_tokens) > rp_window_size:
                         last_tokens = torch.cat(generated_tokens[-rp_window_size:], dim=-1)  # [B, window]
                     else:
                         last_tokens = torch.cat(generated_tokens, dim=-1)  # [B, T]
-                    rp_matrix = torch.ones_like(modified_logits)
+                    rp_matrix = torch.ones_like(prob)
                     for i in range(last_tokens.size(0)):  # 遍历 batch
                         rp_matrix[i, torch.unique(last_tokens[i])] = rp_factor
                     
-                    modified_logits = modified_logits**rp_matrix
+                    prob = prob**rp_matrix
                 # ----------------- Repeat Penalty ---------------------- #
-                # 这里将不再进行温度处理，因为会导致不确定性和训练困难
-                prob = (modified_logits).softmax(dim=-1)
                 # 根据概率使用贪心采样获取下一个token id，并在第一个 token 处做多样化处理
                 if i == 0:
                     token_ids = torch.diag(torch.topk(prob, k=prob.shape[0], dim=-1)[1]).unsqueeze(-1)
@@ -630,17 +630,17 @@ def confidently_generate_and_return_termination_logprob(
         # 计算对应概率
         logprob = logits.log_softmax(dim=-1)
         # ----------------- Repeat Penalty ---------------------- #
-        # 这里因为已经是 log_softmax 后的，因此我们做乘法惩罚
-        if i != 0:
-            if len(generated_tokens) > rp_window_size:
-                last_tokens = torch.cat(generated_tokens[-rp_window_size:], dim=-1)  # [B, window]
-            else:
-                last_tokens = torch.cat(generated_tokens, dim=-1)  # [B, T]
-            rp_matrix = torch.ones_like(modified_logits)
-            for i in range(last_tokens.size(0)):  # 遍历 batch
-                rp_matrix[i, torch.unique(last_tokens[i])] = rp_factor  # 去重并施加 penalty
+        # # 这里因为已经是 log_softmax 后的，因此我们做乘法惩罚
+        # if i != 0:
+        #     if len(generated_tokens) > rp_window_size:
+        #         last_tokens = torch.cat(generated_tokens[-rp_window_size:], dim=-1)  # [B, window]
+        #     else:
+        #         last_tokens = torch.cat(generated_tokens, dim=-1)  # [B, T]
+        #     rp_matrix = torch.ones_like(modified_logits)
+        #     for i in range(last_tokens.size(0)):  # 遍历 batch
+        #         rp_matrix[i, torch.unique(last_tokens[i])] = rp_factor  # 去重并施加 penalty
             
-            logprob = logprob*rp_matrix
+        #     logprob = logprob*rp_matrix
         # ----------------- Repeat Penalty ---------------------- #
         # 记录终止概率，只记录 alive 的样本的终止概率，死掉的这一步记为0
         # 终止概率即下一步输出终止 token 的概率
