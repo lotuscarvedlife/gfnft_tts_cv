@@ -281,6 +281,18 @@ class NextSentenceGFNTask(LightningModule):
             subtb_lambda=self.hparams.subtb_lambda,
         )
 
+        if torch.isinf(torch.tensor(loss)):
+            loss = 0.0
+            with open("loss_is_inf.txt", 'a') as f:
+                from datetime import datetime
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                f.write(f"[{timestamp}] log_r: {log_r}\n")
+                f.write(f"[{timestamp}] log_pf: {log_pf}\n")
+                f.write(f"[{timestamp}] log_pterm: {log_pterm}\n")
+                f.write(f"[{timestamp}] generated_text: {generated_text}\n")
+                f.write(f"[{timestamp}] subtb_lambda: {self.hparams.subtb_lambda}\n")
+                f.write("\n")
+
         # Log metrics
         _, last_log_r, last_log_r_unpenalized, sentence_len = get_termination_vals(
             generated_text=generated_text,
@@ -362,6 +374,11 @@ class NextSentenceGFNTask(LightningModule):
         # Log scheduled quantities
         self.log("scheduled/R_temperature", self.reward.temperature, sync_dist=True)
         self.log("scheduled/lr", self.get_lr_at_step(self.global_step), sync_dist=True)
+        
+        with open("loss_is_inf.txt", 'a') as f:
+            from datetime import datetime
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            f.write(f"[{timestamp}] global_step: {self.global_step}\n")
 
         # 记录探针样本，存储至探针表中
         # NOTE: 探针没有适配

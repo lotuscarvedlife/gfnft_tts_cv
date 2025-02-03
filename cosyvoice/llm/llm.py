@@ -553,7 +553,7 @@ class Qwen2LM(torch.nn.Module):
                 prob = prob**rp_matrix
                 # print(f"modified_last_tokens_logits: {modified_logits[0, torch.unique(last_tokens)]}")
                 # ----------------- Repeat Penalty ---------------------- #
-            # 根据概率采样下一个token，生成每一句的下一个 token id
+            # # 根据概率采样下一个token，生成每一句的下一个 token id
             if i==0:
                 top_ids = torch.multinomial(prob.squeeze(dim=0), num_samples=1).item()
             else:

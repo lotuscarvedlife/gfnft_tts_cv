@@ -30,8 +30,8 @@ with open("inference_target_tts_text.txt", "r", encoding='utf-8') as file:
 
 # 现在这个可以合成 list 目标
 for i, j in enumerate(cosyvoice.inference_zero_shot(tts_list[:9],
-                                                    #  'Because our leaders are stupid, our politicians are stupid',
-                                                       '各位观众朋友们大家好，我是从来不带节奏的血狼，今天给大家做一期明日方舟终末地基建入门教程。',
+                                                     'Because our leaders are stupid, our politicians are stupid',
+                                                    #    '各位观众朋友们大家好，我是从来不带节奏的血狼，今天给大家做一期明日方舟终末地基建入门教程。',
                                                        prompt_speech_16k, stream=False)):
     torchaudio.save('inference_results/test/zero_shot_{}.wav'.format(i), j['tts_speech'], cosyvoice.sample_rate)
 
