@@ -7,6 +7,7 @@ from pytorch_lightning import LightningModule
 from utils import (
     generate_and_return_termination_logprob,
     confidently_generate_and_return_termination_logprob,
+    generate_and_return_termination_logprob_repetition_penalty,
     modified_subtb_loss,
     trajectory_balance_loss,
     modified_subtb_loss_without_eos_reward,
@@ -108,7 +109,7 @@ class NextSentenceGFNTask(LightningModule):
             log_pterm,              # 句子终止概率的对数
             log_r,                  # 奖励的对数
             log_r_unpenalized,      # 未惩罚奖励的对数
-        ) = confidently_generate_and_return_termination_logprob(
+        ) = generate_and_return_termination_logprob_repetition_penalty(
             self.model,                                                 # 传入 model        
             prompt,                                                     # 传入 prompt
             reward_fn=reward_fn,                                        # 传入奖励函数
@@ -180,7 +181,7 @@ class NextSentenceGFNTask(LightningModule):
         
         # 计算 modified_subtb_loss（子轨迹平衡损失），也是 GFN 的损失
         # Get the GFN loss
-        loss = trajectory_balance_confidence_loss(
+        loss = trajectory_balance_loss(
             log_pf=log_pf,
             log_r=log_r,
             log_pterm=log_pterm,
@@ -271,7 +272,7 @@ class NextSentenceGFNTask(LightningModule):
         )
 
         # Get the GFN loss
-        loss = trajectory_balance_confidence_loss(
+        loss = trajectory_balance_loss(
             log_pf=log_pf,
             log_r=log_r,
             log_pterm=log_pterm,
@@ -281,7 +282,7 @@ class NextSentenceGFNTask(LightningModule):
             subtb_lambda=self.hparams.subtb_lambda,
         )
 
-        if torch.isinf(torch.tensor(loss)):
+        if torch.isinf(loss.clone().detach()):
             loss = 0.0
             with open("loss_is_inf.txt", 'a') as f:
                 from datetime import datetime

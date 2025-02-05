@@ -44,6 +44,9 @@ import torch
 # prob_2 = prob_2*(torch.ones_like(prob)*3)
 
 # topk_indices = torch.diag(torch.topk(prob, k=10, dim=-1)[1]).unsqueeze(-1)
-a = float('inf')
+a = torch.tensor([1,2,3])
+b = torch.tensor([0,2,1])
+c = torch.tensor([1])
 
-print(torch.isinf(a))
+
+print(a+c)
